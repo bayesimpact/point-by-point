@@ -289,6 +289,7 @@ TypeScript monorepo, pnpm workspaces, Node 22+.
 packages/
   server/   Cloudflare Worker: MCP server (tool + interface resource)
   ui/       the annotation interface, built to a single HTML file
+  web/      the same annotation on any web page: pins, page images, one message (packages/web/README.md)
 plugin/     the plugin: skills/point-by-point, plus two manifests for the same plugin:
             .claude-plugin/plugin.json + .mcp.json (Claude),
             plugin.json + mcp.json (portable Agent Plugins format: ChatGPT, Codex)

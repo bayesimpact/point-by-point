@@ -1,0 +1,212 @@
+/* @point-by-point/web. Every colour and size is a variable, so a site restyles it from its own
+   tokens without overriding a rule: set the --pbp-* below on :root. */
+:root {
+  --pbp-ink: #1f1e1c;
+  --pbp-paper: #ffffff;
+  --pbp-muted: #6a6862;
+  --pbp-line: rgba(31, 30, 28, 0.13);
+  --pbp-mark: rgba(242, 196, 64, 0.32);
+  --pbp-mark-open: rgba(242, 196, 64, 0.62);
+  --pbp-hover: rgba(242, 196, 64, 0.18);
+  --pbp-pin: #f2c440;
+  --pbp-pin-ink: #3a2d06;
+  --pbp-primary: #f2c440;
+  --pbp-primary-ink: #3a2d06;
+  --pbp-radius: 12px;
+  --pbp-shadow: 0 10px 30px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.08);
+  --pbp-font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  /* The floating button and the toolbar, bottom right. */
+  --pbp-bubble-bg: var(--pbp-ink);
+  --pbp-bubble-ink: var(--pbp-paper);
+  --pbp-right: 20px;
+  --pbp-bottom: 20px;
+  --pbp-z: 120;
+}
+
+::highlight(pbp-note) { background-color: var(--pbp-mark); }
+::highlight(pbp-open) { background-color: var(--pbp-mark-open); }
+::highlight(pbp-hover) { background-color: var(--pbp-hover); }
+
+.pbp-on, .pbp-on * { cursor: text; }
+.pbp-on img { cursor: crosshair; }
+.pbp-on [data-pbp-ui], .pbp-on [data-pbp-ui] * { cursor: auto; }
+.pbp-on .pbp-pin, .pbp-on button[data-pbp-ui], .pbp-on a[data-pbp-ui] { cursor: pointer; }
+.pbp-on [data-pbp-ui] textarea { cursor: text; }
+
+.pbp-layer { position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: calc(var(--pbp-z) - 20); }
+
+/* A pin: a drop whose point is on the passage, numbered in page order. */
+.pbp-pin {
+  position: absolute;
+  z-index: 2;
+  width: 24px;
+  height: 24px;
+  margin: -24px 0 0 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--pbp-paper);
+  border-radius: 50% 50% 50% 0;
+  background: var(--pbp-pin);
+  color: var(--pbp-pin-ink);
+  font: 700 11px/1 var(--pbp-font);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  transition: transform 0.12s ease;
+  transform-origin: 0 100%;
+}
+.pbp-pin:hover, .pbp-pin.is-open { transform: scale(1.15); }
+.pbp-pin.is-empty { background: var(--pbp-paper); color: var(--pbp-muted); border-color: var(--pbp-pin); }
+
+/* The lines of a sentence on a page image. */
+.pbp-box {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: 3px;
+  background: var(--pbp-mark);
+  mix-blend-mode: multiply;
+}
+.pbp-box.is-open { background: var(--pbp-mark-open); }
+
+/* The card beside a pin. */
+.pbp-pop {
+  position: fixed;
+  z-index: calc(var(--pbp-z) + 10);
+  width: min(320px, calc(100vw - 24px));
+  padding: 12px;
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--pbp-paper);
+  color: var(--pbp-ink);
+  border: 1px solid var(--pbp-line);
+  border-radius: var(--pbp-radius);
+  box-shadow: var(--pbp-shadow);
+  font: 14px/1.45 var(--pbp-font);
+}
+.pbp-pop.is-open { display: flex; }
+.pbp-pop-quote {
+  margin: 0;
+  padding: 0 0 0 10px;
+  border-left: 3px solid var(--pbp-pin);
+  color: var(--pbp-muted);
+  font-size: 13px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.pbp-pop-text {
+  width: 100%;
+  min-height: 72px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--pbp-line);
+  border-radius: 8px;
+  background: var(--pbp-paper);
+  color: var(--pbp-ink);
+  font: inherit;
+  resize: vertical;
+}
+.pbp-pop-text:focus { outline: 2px solid var(--pbp-pin); outline-offset: -1px; border-color: transparent; }
+.pbp-pop-foot { display: flex; justify-content: space-between; align-items: center; }
+
+.pbp-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: 600 14px/1 var(--pbp-font);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.pbp-btn:hover:not(:disabled) { background: color-mix(in srgb, currentColor 10%, transparent); }
+.pbp-btn:disabled, .pbp-btn.is-disabled { opacity: 0.45; pointer-events: none; }
+.pbp-primary { background: var(--pbp-primary); color: var(--pbp-primary-ink); }
+.pbp-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--pbp-primary) 88%, #000); }
+.pbp-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--pbp-muted);
+  font: 13px/1 var(--pbp-font);
+  text-decoration: underline;
+}
+
+/* The floating button, and the toolbar that replaces it while commenting. */
+.pbp-bubble, .pbp-row {
+  background: var(--pbp-bubble-bg);
+  color: var(--pbp-bubble-ink);
+  border-radius: 999px;
+  box-shadow: var(--pbp-shadow);
+  font: 600 15px/1 var(--pbp-font);
+}
+.pbp-bubble {
+  position: fixed;
+  right: var(--pbp-right);
+  bottom: var(--pbp-bottom);
+  z-index: var(--pbp-z);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px 12px 14px;
+  border: 0;
+}
+.pbp-bubble[hidden] { display: none; }
+.pbp-bubble-icon {
+  width: 18px;
+  height: 18px;
+  background: currentColor;
+  -webkit-mask: var(--pbp-icon) center / contain no-repeat;
+  mask: var(--pbp-icon) center / contain no-repeat;
+  --pbp-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 2.5h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H7.5L4.5 14v-2.5H3a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1z'/%3E%3Cpath d='M8 4.75v4.5M5.75 7h4.5'/%3E%3C/svg%3E");
+}
+.pbp-bubble.has-notes .pbp-bubble-icon { background: var(--pbp-pin); }
+
+.pbp-bar {
+  position: fixed;
+  right: var(--pbp-right);
+  bottom: var(--pbp-bottom);
+  z-index: var(--pbp-z);
+  display: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: calc(100vw - 2 * var(--pbp-right));
+}
+.pbp-bar.is-on { display: flex; }
+.pbp-hint {
+  margin: 0;
+  max-width: 320px;
+  padding: 10px 14px;
+  background: var(--pbp-paper);
+  color: var(--pbp-ink);
+  border: 1px solid var(--pbp-line);
+  border-radius: var(--pbp-radius);
+  box-shadow: var(--pbp-shadow);
+  font: 13.5px/1.4 var(--pbp-font);
+}
+.pbp-hint:empty { display: none; }
+.pbp-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 6px;
+}
+.pbp-count { padding: 0 10px 0 12px; font-weight: 500; opacity: 0.75; white-space: nowrap; }
+.pbp-done { opacity: 0.85; }
+
+@media (max-width: 640px) {
+  /* On a phone the card is a sheet at the bottom, above the toolbar. */
+  .pbp-pop { left: 12px !important; right: 12px; top: auto !important; bottom: 84px; width: auto; }
+  .pbp-count { display: none; }
+}
+
+@media print {
+  .pbp-layer, .pbp-pin, .pbp-box, .pbp-pop, .pbp-bar, .pbp-bubble { display: none !important; }
+}

@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@12.11.2",
   "scripts": {
-    "build": "pnpm --filter @point-by-point/ui build && pnpm --filter @point-by-point/server build",
+    "build": "pnpm --filter @point-by-point/ui build && pnpm --filter @point-by-point/web build && pnpm --filter @point-by-point/server build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",

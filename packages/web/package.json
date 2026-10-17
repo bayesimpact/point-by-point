@@ -1,0 +1,29 @@
+{
+  "name": "@point-by-point/web",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Point by point on any web page: pins on sentences, passages and page images, sent back as one message.",
+  "exports": {
+    ".": "./dist/pins.js",
+    "./pins.css": "./dist/pins.css"
+  },
+  "bin": {
+    "pbp-page-text": "./bin/page-text.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "30.1.2",
+    "playwright": "1.64.1",
+    "typescript": "5.9.3",
+    "vite": "8.3.4",
+    "vitest": "5.0.4"
+  },
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite demo",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "tsc -p tsconfig.json",
+    "demo:pages": "node demo/build-pages.mjs"
+  }
+}

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Point par point sur une page web</title>
+  <style>
+    body { margin: 0; font: 17px/1.6 Georgia, serif; color: #1f1e1c; background: #faf9f5; }
+    main { max-width: 760px; margin: 0 auto; padding: 48px 16px 120px; }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 15px; }
+    th, td { border-bottom: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }
+    .viewer { border: 1px solid #ddd; border-radius: 12px; overflow: hidden; background: #fff; }
+    .viewer header { padding: 8px 14px; font: 13px/1 ui-monospace, monospace; border-bottom: 1px solid #ddd; background: #f3f1ea; }
+    .stage { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 16px; aspect-ratio: 4 / 3; overflow-y: auto; background: #eceae4; }
+    .stage img { width: 86%; box-shadow: 0 1px 4px rgba(0,0,0,.15); background: #fff; aspect-ratio: 210 / 297; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Point par point sur une page web</h1>
+    <p>Cliquez « Commenter » en bas à droite. Un clic sur une phrase y pose une épingle, et une sélection est élargie aux mots entiers. Rien n’est inséré dans la page : le tableau ci-dessous garde sa mise en page.</p>
+    <table>
+      <tr><th>Date</th><th>Étape</th></tr>
+      <tr><td>27 octobre</td><td>Les dossiers sont remis. Une deuxième phrase dans la même cellule.</td></tr>
+      <tr><td>5 décembre</td><td>Les services ouvrent.</td></tr>
+    </table>
+    <p>Le document ci-dessous est un PDF montré en images, dans un cadre qui défile seul. Un clic sur une page cite la phrase sous le pointeur, et l’épingle défile avec la page.</p>
+    <figure class="viewer">
+      <header>document.pdf</header>
+      <div class="stage" tabindex="0">
+        <img src="pages/1.webp" alt="document.pdf, page 1" data-page="1">
+        <img src="pages/2.webp" alt="document.pdf, page 2" data-page="2">
+      </div>
+    </figure>
+    <p>Le message part en un bloc, dans l’ordre de la page. Ici, il ne part nulle part : « Copier » le met dans le presse-papier.</p>
+  </main>
+  <script type="module">
+    import { mountPins } from "../src/index.ts";
+    window.pins = mountPins({
+      root: document.querySelector("main"),
+      pages: {
+        selector: ".stage img",
+        describe: (img) => ({ label: "document.pdf", page: Number(img.dataset.page), text: img.src.replace(/\.webp$/, ".json") }),
+      },
+      mailto: { to: "feedback@example.org" },
+    });
+  </script>
+</body>
+</html>

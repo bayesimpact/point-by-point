@@ -158,7 +158,6 @@ interface Placed {
   order: { node: Node; sub: number } | null;
 }
 
-const TEXT_BLOCKS = "p, li, h1, h2, h3, h4, h5, h6, td, th, dt, dd, blockquote, figcaption, summary";
 const WORD = /[\p{L}\p{N}'’\-]/u;
 /** A sentence shorter than this ("IV.", "1.") goes with the next one. */
 const SHORT = 12;
@@ -192,6 +191,19 @@ function scroller(node: Node): HTMLElement | null {
     if (/(auto|scroll)/.test(s.overflowY + s.overflowX) && (e.scrollHeight > e.clientHeight || e.scrollWidth > e.clientWidth)) {
       return e as HTMLElement;
     }
+  }
+  return null;
+}
+
+/**
+ * The block a text node belongs to: its nearest ancestor laid out as a block (a paragraph, a list
+ * item, a table cell, and also the div or the span a component sets as a block), so a card's text
+ * is a sentence like any other.
+ */
+function blockAround(node: Node): Element | null {
+  for (let e = node.parentElement; e; e = e.parentElement) {
+    const d = getComputedStyle(e).display;
+    if (!d.startsWith("inline") && d !== "contents") return e;
   }
   return null;
 }
@@ -286,19 +298,22 @@ export function mountPins(options: PinsOptions = {}): Pins {
   const placed = new Map<string, Placed>();
   let openId: string | null = null;
 
-  const message = () => {
-    const live = mine().filter((n) => n.text.trim());
-    if (!live.length) return "";
-    // Page order, from the live page; notes whose passage is gone go last, oldest first.
-    const ordered = live
+  /** Page order, from the live page; notes whose passage is gone go last, oldest first. */
+  const inPageOrder = (list: Note[]) =>
+    list
       .map((n) => ({ n, o: placed.get(n.id)?.order ?? null }))
       .sort((a, b) => {
         if (!a.o || !b.o) return a.o ? -1 : b.o ? 1 : a.n.created - b.n.created;
         if (a.o.node === b.o.node) return a.o.sub - b.o.sub;
         return a.o.node.compareDocumentPosition(b.o.node) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
-      });
+      })
+      .map(({ n }) => n);
+
+  const message = () => {
+    const live = mine().filter((n) => n.text.trim());
+    if (!live.length) return "";
     return compose(
-      ordered.map(({ n }, i) => ({ quote: n.quote, text: n.text, order: i })),
+      inPageOrder(live).map((n, i) => ({ quote: n.quote, text: n.text, order: i })),
       { contextLine: w().head(title(), location.href.split("#")[0]!) },
     );
   };
@@ -390,12 +405,17 @@ export function mountPins(options: PinsOptions = {}): Pins {
         const at = position(host, point.x, point.y);
         p.pin.style.left = `${at.left}px`;
         p.pin.style.top = `${at.top}px`;
-        p.pin.textContent = String(++n);
         p.pin.classList.toggle("is-open", openId === note.id);
         p.pin.classList.toggle("is-empty", !note.text.trim());
-        p.pin.setAttribute("aria-label", `${n}. ${note.quote}`);
         if (p.pin.parentElement !== host) host.append(p.pin);
       } else p.pin.remove();
+    }
+    // Numbered in page order, as the message is.
+    for (const note of inPageOrder(mine())) {
+      const p = placed.get(note.id);
+      if (!p?.pin.isConnected) continue;
+      p.pin.textContent = String(++n);
+      p.pin.setAttribute("aria-label", `${n}. ${note.quote}`);
     }
     for (const [id, p] of placed) {
       if (!live.has(id)) {
@@ -492,7 +512,7 @@ export function mountPins(options: PinsOptions = {}): Pins {
   const sentenceAt = (x: number, y: number): Range | null => {
     const caret = caretAt(x, y);
     if (!caret || caret.node.nodeType !== 3) return null;
-    const block = caret.node.parentElement?.closest(TEXT_BLOCKS);
+    const block = blockAround(caret.node);
     if (!block || !rootOf().contains(block) || block.closest("[data-pbp-ui]")) return null;
     const idx = indexed();
     const from = offsetOf(idx, block, 0);

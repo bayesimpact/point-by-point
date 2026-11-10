@@ -51,6 +51,7 @@ export function renderMarkdown(markdown: string, doc: Document = document): Docu
     RETURN_DOM_FRAGMENT: true,
   }) as DocumentFragment;
   for (const table of fragment.querySelectorAll("table")) wrapTable(table, doc);
+  for (const pre of fragment.querySelectorAll("pre")) wrapCode(pre, doc);
   return fragment;
 }
 
@@ -63,4 +64,15 @@ function wrapTable(table: HTMLTableElement, doc: Document) {
   table.replaceWith(frame);
   scroller.append(table);
   frame.append(scroller);
+}
+
+/** A frame around the code block, holding the button that copies its code. */
+function wrapCode(pre: HTMLPreElement, doc: Document) {
+  const frame = doc.createElement("div");
+  frame.className = "code-block";
+  const button = doc.createElement("button");
+  button.type = "button";
+  button.className = "code-copy";
+  pre.replaceWith(frame);
+  frame.append(pre, button);
 }

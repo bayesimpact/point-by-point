@@ -126,6 +126,7 @@ function renderPartial(text: string) {
   requestAnimationFrame(() => {
     if (!ready && pendingPartial !== null) {
       content.replaceChildren(renderMarkdown(pendingPartial));
+      labelCodeButtons();
       content.classList.remove("waiting");
       content.classList.add("streaming");
       content.setAttribute("aria-busy", "true");
@@ -150,6 +151,7 @@ function renderFinal(text: string, diagnostic = false) {
   }
 
   content.replaceChildren(renderMarkdown(text));
+  labelCodeButtons();
   content.classList.remove("streaming", "waiting");
   content.removeAttribute("aria-busy");
   sentences = segmentContainer(content, lang);
@@ -384,7 +386,7 @@ function annotateSelection(range: Range) {
 /** The selected response text, without the text of any note it crosses. */
 function quoteOf(range: Range): string {
   const fragment = range.cloneContents();
-  for (const note of fragment.querySelectorAll(".note-slot, .note")) note.remove();
+  for (const skipped of fragment.querySelectorAll(".note-slot, .note, .code-block")) skipped.remove();
   for (const block of fragment.querySelectorAll("p, li, h1, h2, h3, h4, h5, h6, td, th, pre, dt, dd")) {
     block.append(" ");
   }
@@ -548,30 +550,16 @@ content.addEventListener("click", (event) => {
     return;
   }
   if (!ready || target.closest(".note")) return;
+  // A mouse annotates what it selects, so a click only places the caret. A tap still annotates its
+  // sentence, since selecting by touch is slow.
+  const pointer = (event as PointerEvent).pointerType;
+  if (pointer ? pointer === "mouse" : !isTouch()) return;
   const selection = window.getSelection();
   if (selection && !selection.isCollapsed && content.contains(selection.anchorNode)) return;
   const phrase = target.closest<HTMLElement>(".phrase[data-s]");
   const sentence = phrase && sentences[Number(phrase.dataset.s)];
   if (sentence) annotateSentence(sentence);
 });
-
-// The sentence under the mouse gets the annotation's highlighter stroke, on all its spans at once (a
-// sentence is split into several spans around bold text or links).
-let hoveredSentence: Sentence | null = null;
-
-function hoverSentence(sentence: Sentence | null) {
-  if (sentence === hoveredSentence) return;
-  for (const span of hoveredSentence?.spans ?? []) span.classList.remove("hovered");
-  hoveredSentence = sentence;
-  for (const span of sentence?.spans ?? []) span.classList.add("hovered");
-}
-
-content.addEventListener("pointerover", (event) => {
-  if (event.pointerType !== "mouse") return;
-  const phrase = (event.target as HTMLElement).closest<HTMLElement>(".phrase[data-s]");
-  hoverSentence(ready && phrase && !phrase.closest(".note") ? (sentences[Number(phrase.dataset.s)] ?? null) : null);
-});
-content.addEventListener("pointerleave", () => hoverSentence(null));
 
 /** True while the user types in a note: selections there belong to the field. */
 function editingText(): boolean {
@@ -812,6 +800,40 @@ async function copyText(text: string): Promise<boolean> {
     return document.execCommand?.("copy") ?? false;
   }
 }
+
+function labelCodeButtons() {
+  for (const button of content.querySelectorAll(".code-copy")) button.setAttribute("aria-label", s.codeCopy);
+}
+
+/** Puts the code of a block on the clipboard without opening the message fallback box. */
+async function copyCode(code: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(code);
+    return true;
+  } catch {
+    const box = document.createElement("textarea");
+    box.value = code;
+    box.style.cssText = "position:fixed;opacity:0;top:0;left:0";
+    document.body.append(box);
+    box.select();
+    const copied = document.execCommand?.("copy") ?? false;
+    box.remove();
+    return copied;
+  }
+}
+
+content.addEventListener("click", async (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".code-copy");
+  const code = button?.parentElement?.querySelector("pre")?.textContent;
+  if (!button || code == null) return;
+  const copied = await copyCode(code.replace(/\n$/, ""));
+  button.dataset.state = copied ? "copied" : "failed";
+  button.setAttribute("aria-label", copied ? s.codeCopied : s.codeCopyFailed);
+  setTimeout(() => {
+    delete button.dataset.state;
+    button.setAttribute("aria-label", s.codeCopy);
+  }, 1800);
+});
 
 copyButton.addEventListener("click", async () => {
   showError((await copyText(fallbackText.value)) ? s.copied : s.copyFailed);

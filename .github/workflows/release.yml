@@ -55,9 +55,11 @@ jobs:
       - name: Publish the GitHub release
         run: |
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" point-by-point-skill.zip --clobber
+            gh release upload "$GITHUB_REF_NAME" point-by-point-skill.zip "$SERVER" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" point-by-point-skill.zip --title "$GITHUB_REF_NAME" --generate-notes
+            gh release create "$GITHUB_REF_NAME" point-by-point-skill.zip "$SERVER" --title "$GITHUB_REF_NAME" --generate-notes
           fi
         env:
           GH_TOKEN: ${{ github.token }}
+          # The local server, one file that Node runs as is (see "Run it on your computer").
+          SERVER: packages/server/dist/point-by-point-server.mjs

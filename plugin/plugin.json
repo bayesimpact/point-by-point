@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "point-by-point",
-  "version": "0.30.0",
+  "version": "0.33.0",
   "description": "Annotate any sentence of the assistant's responses and reply point by point in a single message.",
   "author": {
     "name": "Alexis Jamet"

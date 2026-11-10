@@ -47,7 +47,6 @@
     --pbp-danger: var(--color-text-danger, #f2a49d);
     --pbp-send: #f0c545;
     --pbp-send-ink: #2a2004;
-    --pbp-marker: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 20' preserveAspectRatio='none'%3E%3Cpath fill='%23ffd400' fill-opacity='.34' d='M2.5,4.2 C10,2.4 19,5.1 30,3.6 C44,1.9 58,4.8 73,3.1 C84,1.9 92,3.6 98,2.6 C99.6,6.2 99.1,11.4 98.4,16.3 C90,17.9 78,15.4 65,17.2 C50,19.1 36,15.9 21,17.6 C12,18.6 6,16.3 1.6,17.1 C.4,13 .9,8 2.5,4.2 Z'/%3E%3Cpath fill='%23ffd400' fill-opacity='.2' d='M4,7 C20,5.5 40,8.5 60,6.5 C75,5.3 88,7.4 96,6 C96.5,9 96.2,12 95.8,14 C80,15.5 62,12.8 45,14.6 C28,16.3 14,13.6 3.5,14.4 C3,12 3.2,9.5 4,7 Z'/%3E%3C/svg%3E");
   }
 }
 
@@ -63,7 +62,6 @@
   --pbp-danger: var(--color-text-danger, #f2a49d);
   --pbp-send: #f0c545;
   --pbp-send-ink: #2a2004;
-  --pbp-marker: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 20' preserveAspectRatio='none'%3E%3Cpath fill='%23ffd400' fill-opacity='.34' d='M2.5,4.2 C10,2.4 19,5.1 30,3.6 C44,1.9 58,4.8 73,3.1 C84,1.9 92,3.6 98,2.6 C99.6,6.2 99.1,11.4 98.4,16.3 C90,17.9 78,15.4 65,17.2 C50,19.1 36,15.9 21,17.6 C12,18.6 6,16.3 1.6,17.1 C.4,13 .9,8 2.5,4.2 Z'/%3E%3Cpath fill='%23ffd400' fill-opacity='.2' d='M4,7 C20,5.5 40,8.5 60,6.5 C75,5.3 88,7.4 96,6 C96.5,9 96.2,12 95.8,14 C80,15.5 62,12.8 45,14.6 C28,16.3 14,13.6 3.5,14.4 C3,12 3.2,9.5 4,7 Z'/%3E%3C/svg%3E");
 }
 
 * {
@@ -151,6 +149,7 @@ body {
 .response ol,
 .response blockquote,
 .response pre,
+.response .code-block,
 .response .table-wrap {
   margin: 0 0 0.85em;
 }
@@ -196,6 +195,52 @@ body {
   background: var(--pbp-surface);
   border-radius: 4px;
   padding: 0.1em 0.3em;
+}
+
+.response .code-block {
+  position: relative;
+}
+
+.response .code-block pre {
+  margin: 0;
+}
+
+.response .code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--pbp-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 150ms ease, background-color 150ms ease;
+  /* Two overlapping sheets; a check mark replaces them once copied. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23888' stroke-width='1.4'%3E%3Crect x='5.5' y='5.5' width='8' height='8' rx='1.5'/%3E%3Cpath d='M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.500 3.500V9A1.5 1.5 0 0 0 4 10.500h1.500'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 16px;
+}
+
+.response .code-block:hover .code-copy,
+.response .code-copy:focus-visible,
+.response .code-copy[data-state] {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .response .code-copy { opacity: 1; }
+}
+
+.response .code-copy:hover {
+  background-color: color-mix(in srgb, var(--pbp-text) 10%, transparent);
+}
+
+.response .code-copy[data-state="copied"] {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23888' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 8.500l3.500 3.500L13 4.500'/%3E%3C/svg%3E");
 }
 
 .response pre {
@@ -345,9 +390,7 @@ body {
 
 /* ---------- Sentences ---------- */
 
-.response:not(.streaming) .phrase {
-  cursor: pointer;
-  border-radius: 3px;
+.response .phrase {
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
@@ -357,31 +400,9 @@ body {
   outline-offset: 1px;
 }
 
-/* Annotated sentences get a highlighter stroke that wipes in from the left, and back out when the
-   note is removed; the sentence under the mouse gets the same stroke, so pointing shows what a click
-   will annotate. The stroke runs a little past the words (padding), without moving them (margin). */
-.response span.phrase {
-  padding: 0 0.12em;
-  margin: 0 -0.12em;
-  background-image: var(--pbp-marker);
-  background-repeat: no-repeat;
-  background-position: 0 60%;
-  background-size: 0% 88%;
-  transition:
-    background-color 150ms ease,
-    background-size 650ms cubic-bezier(0.3, 0.9, 0.4, 1);
-}
-
+/* Annotated sentences and passages take the same flat highlighter yellow. */
 .response span.phrase.annotated,
-.response span.phrase.annotated-passage,
-.response:not(.streaming) span.phrase.hovered {
-  background-size: 100% 88%;
-}
-
-/* A code block is one unit: a flat tint suits it better than a stroke. */
-.response .phrase-unit.annotated,
-.response .phrase-unit.annotated-passage,
-.response:not(.streaming) .phrase-unit.hovered {
+.response span.phrase.annotated-passage {
   background-color: var(--pbp-mark);
 }
 
@@ -866,8 +887,6 @@ body.sheet:not(.focus-mode) #app {
   /* A long, soft ease-out for things that arrive, a slight overshoot for confirmations. */
   --pbp-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --pbp-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
-  /* A highlighter stroke with uneven edges, drawn under annotated sentences (the dark themes redefine it above). */
-  --pbp-marker: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 20' preserveAspectRatio='none'%3E%3Cpath fill='%23f2c440' fill-opacity='.5' d='M2.5,4.2 C10,2.4 19,5.1 30,3.6 C44,1.9 58,4.8 73,3.1 C84,1.9 92,3.6 98,2.6 C99.6,6.2 99.1,11.4 98.4,16.3 C90,17.9 78,15.4 65,17.2 C50,19.1 36,15.9 21,17.6 C12,18.6 6,16.3 1.6,17.1 C.4,13 .9,8 2.5,4.2 Z'/%3E%3Cpath fill='%23f2c440' fill-opacity='.3' d='M4,7 C20,5.5 40,8.5 60,6.5 C75,5.3 88,7.4 96,6 C96.5,9 96.2,12 95.8,14 C80,15.5 62,12.8 45,14.6 C28,16.3 14,13.6 3.5,14.4 C3,12 3.2,9.5 4,7 Z'/%3E%3C/svg%3E");
 }
 
 /* While Claude writes, the waiting line shimmers. */
@@ -898,10 +917,6 @@ body.sheet:not(.focus-mode) #app {
 
 @keyframes pbp-rise {
   from { opacity: 0; transform: translateY(6px); }
-}
-
-.response .phrase-unit {
-  transition: background-color 200ms ease;
 }
 
 .note {

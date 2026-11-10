@@ -11,7 +11,7 @@
       "name": "point-by-point",
       "source": "./plugin",
       "description": "Annotate any sentence of Claude's responses and reply point by point in a single message.",
-      "version": "0.30.0",
+      "version": "0.33.0",
       "license": "MIT",
       "keywords": [
         "annotation",

@@ -65,7 +65,7 @@ async function mount(page: Page, theme: keyof typeof THEMES, markdown: string): 
   return frame;
 }
 
-/** Selects a passage inside a sentence, as a drag with the mouse would. */
+/** Selects a passage, as a drag with the mouse does. */
 async function selectPassage(frame: FrameLocator, passage: string) {
   await frame.locator("#content").evaluate((content, text) => {
     const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
@@ -86,14 +86,14 @@ async function selectPassage(frame: FrameLocator, passage: string) {
 
 async function settle(page: Page) {
   await page.mouse.move(0, 0);
-  // The highlighter strokes and the notes animate in.
+  // The notes animate in.
   await page.waitForTimeout(1000);
 }
 
 for (const theme of ["light", "dark"] as const) {
   test(`annotating (${theme})`, async ({ page }) => {
     const frame = await mount(page, theme, RESPONSE);
-    await frame.locator(".phrase", { hasText: "First we migrate the database." }).click();
+    await selectPassage(frame, "First we migrate the database.");
     await frame.locator(".note textarea").last().fill("Back it up first.");
     // A selection made while a field has the focus belongs to the field.
     await frame.locator(".note textarea").last().blur();

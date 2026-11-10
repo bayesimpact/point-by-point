@@ -1,8 +1,8 @@
 # point-by-point
 
-Reply to Claude or ChatGPT **point by point**. The assistant shows its response in a read-only interface; you click any
-sentence (or select any passage), write your reply or question under it, and send everything back
-in a single message.
+Reply to Claude or ChatGPT **point by point**. The assistant shows its response in a read-only interface; you select
+any passage with the mouse (or tap a sentence on a phone), write your reply or question under it,
+and send everything back in a single message.
 
 **Contents**
 
@@ -13,6 +13,7 @@ in a single message.
   - [Try it](#try-it)
   - [If it doesn't work](#if-it-doesnt-work)
   - [Run your own copy of the server](#run-your-own-copy-of-the-server)
+  - [Run it on your computer](#run-it-on-your-computer)
   - [For an organisation](#for-an-organisation)
   - [Anthropic's plugin directory](#anthropics-plugin-directory)
 - [How it works](#how-it-works)
@@ -25,8 +26,8 @@ in a single message.
   - [Release](#release)
 - [License](#license)
 
-**1. Click a sentence or select a passage, and write under it.** Pointing at a sentence highlights
-what a click will annotate.
+**1. Select a passage, and write under it.** Drag over exactly the words you want to annotate:
+they stay highlighted in yellow.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/annotate-dark.png">
@@ -144,8 +145,8 @@ install **point-by-point** from the Plugins Directory, under that marketplace.
 Start a **new conversation** and ask anything. Instead of plain text, the answer appears in an
 interface:
 
-1. Click a sentence (or select a passage) and type your reply under it. Repeat for as many
-   sentences as you like.
+1. Select a passage (on a phone, tap a sentence) and type your reply under it. Repeat for as many
+   passages as you like.
 2. Press **Draft my reply** (in ChatGPT, **Send**). In Claude the message lands in your
    message box: press Enter to send it.
 3. The assistant answers each of your points, in a new interface.
@@ -188,6 +189,42 @@ On a new Cloudflare account you may first have to choose that subdomain, under *
 in the dashboard. Then follow [In Claude, without the plugin](#in-claude-without-the-plugin) (or [In ChatGPT](#in-chatgpt)) with your address plus `/mcp`
 as the connector URL; the skill is the same. To get a new release later: `git pull && pnpm run deploy`.
 
+### Run it on your computer
+
+Claude Code and Claude Desktop can start the server themselves, on your computer: the text of the
+responses then goes to no server at all. Each release attaches the local server as one file,
+`point-by-point-server.mjs`, which Node 22 or later runs as is. It speaks MCP over stdio and opens
+no port.
+
+```sh
+mkdir -p ~/.point-by-point
+curl -fsSL -o ~/.point-by-point/point-by-point-server.mjs \
+  https://github.com/alexisjamet/point-by-point/releases/latest/download/point-by-point-server.mjs
+```
+
+Then declare it, with the full path of `node` (`which node`): Claude Desktop does not start
+programs with your terminal's `PATH`.
+
+- **Claude Code** (the terminal, and the Code tab of Claude Desktop):
+  `claude mcp add --scope user point-by-point -- /path/to/node ~/.point-by-point/point-by-point-server.mjs`
+- **The Chat of Claude Desktop**: in `~/Library/Application Support/Claude/claude_desktop_config.json`
+  (`%APPDATA%\Claude\claude_desktop_config.json` on Windows), then quit and reopen Claude:
+
+  ```json
+  {
+    "mcpServers": {
+      "point-by-point": {
+        "command": "/path/to/node",
+        "args": ["/Users/you/.point-by-point/point-by-point-server.mjs"]
+      }
+    }
+  }
+  ```
+
+Remove the hosted connector (or turn it off) where you use the local one, so Claude does not see
+the tool twice. claude.ai in a browser and the mobile apps cannot reach a server on your computer:
+they need the hosted server or your own copy. To update, download the file again.
+
 ### For an organisation
 
 A Team or Enterprise admin adds the plugin from this repository to the organisation's plugin
@@ -216,8 +253,11 @@ in the chat, so you never end up with an invisible response.
 
 ### What the interface does
 
-- Click a sentence, or select a passage of more than two characters, to open a note under its
-  paragraph. Click an annotated sentence again to return to its note.
+- Select a passage of more than two characters with the mouse to open a note under its paragraph;
+  select the same passage again to return to its note. Pointing at or clicking the text proposes
+  nothing. On a touch screen, a tap annotates its whole sentence; with the keyboard, Tab moves from
+  sentence to sentence and Enter annotates one.
+- Annotated passages take a flat yellow highlight.
 - Every note hangs on a sentence or a passage; empty notes are ignored. The button only shows once a
   note has text, and then the hint goes away. In ChatGPT, from two notes on, it says how many it
   sends ("Send 2 annotations").
@@ -257,7 +297,8 @@ through the server.
 The guarantees below hold for the code in this repository. The hosted server
 (`point-by-point.brols.workers.dev`) is run by the author, and nothing lets you check that it runs
 this code: using it means trusting the author, as you trust Anthropic with the conversation itself.
-To trust no one but Cloudflare, [run your own copy](#run-your-own-copy-of-the-server).
+To trust no one but Cloudflare, [run your own copy](#run-your-own-copy-of-the-server). To trust
+no server at all, in Claude Code and Claude Desktop, [run it on your computer](#run-it-on-your-computer).
 
 What the code guarantees:
 
@@ -287,7 +328,8 @@ TypeScript monorepo, pnpm workspaces, Node 22+.
 
 ```
 packages/
-  server/   Cloudflare Worker: MCP server (tool + interface resource)
+  server/   Cloudflare Worker: MCP server (tool + interface resource), and the same server over
+            stdio, bundled into one file to run on your computer (src/stdio.ts)
   ui/       the annotation interface, built to a single HTML file
 plugin/     the plugin: skills/point-by-point, plus two manifests for the same plugin:
             .claude-plugin/plugin.json + .mcp.json (Claude),
@@ -297,7 +339,8 @@ plugin/     the plugin: skills/point-by-point, plus two manifests for the same p
 
 ```sh
 pnpm install
-pnpm build        # interface → packages/ui/dist/index.html, embedded into the Worker
+pnpm build        # interface → packages/ui/dist/index.html, embedded into the Worker and into
+                  # the local server, packages/server/dist/point-by-point-server.mjs
 pnpm test         # unit tests (segmentation, message format, drafts, server guards)
 pnpm e2e          # Playwright: the built interface in a test host (desktop and mobile)
 pnpm dev          # wrangler dev on http://localhost:8787/mcp
@@ -339,7 +382,7 @@ A fork deployed to another Cloudflare account gets its own URL: put it (with `/m
 Bump `version` in `package.json`, `plugin/.claude-plugin/plugin.json`, `plugin/plugin.json` and
 `.claude-plugin/marketplace.json`, then push a `v<version>` tag. The release workflow runs every
 check, builds the interface under its versioned URI (a new URI per release, so no host serves a
-stale cached interface), deploys the Worker and attaches the skill archive to the GitHub release.
+stale cached interface), deploys the Worker and attaches the skill archive and the local server to the GitHub release.
 The URIs of earlier releases keep being served, with the current interface, so widgets already in
 conversations keep loading.
 Deploying needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repository secrets;

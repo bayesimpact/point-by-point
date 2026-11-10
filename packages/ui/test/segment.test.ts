@@ -77,11 +77,11 @@ describe("segmentContainer", () => {
     ]);
   });
 
-  it("keeps a code block as one unit", () => {
-    const { sentences } = render("Avant.\n\n```js\nconst a = 1. ;\nconst b = 2;\n```");
-    expect(sentences).toHaveLength(2);
-    expect(sentences[1]!.block.tagName).toBe("PRE");
-    expect(sentences[1]!.text).toBe("const a = 1. ; const b = 2;");
+  it("leaves code blocks out of the annotatable sentences, and gives them a copy button", () => {
+    const { root, sentences } = render("Avant.\n\n```js\nconst a = 1. ;\nconst b = 2;\n```\n\n- item\n\n  ```\n  x. y\n  ```");
+    expect(sentences.map((sentence) => sentence.text)).toEqual(["Avant.", "item"]);
+    expect(root.querySelector("pre .phrase")).toBeNull();
+    expect(root.querySelectorAll(".code-block > pre + button.code-copy")).toHaveLength(2);
   });
 
   it("maps selection boundaries to stable offsets, even with notes inserted", () => {

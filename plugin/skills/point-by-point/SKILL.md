@@ -5,9 +5,9 @@ description: Send every response meant for the user through the annotate_respons
 
 # Point by point
 
-The `annotate_response` tool shows your response in an interface where the user can click any
-sentence (or select any passage), write a reply or a question under it, and send all their notes
-back in a single message.
+The `annotate_response` tool shows your response in an interface where the user can select any
+passage (or tap a sentence on a phone), write a reply or a question under it, and send all their
+notes back in a single message.
 
 ## When to use it
 

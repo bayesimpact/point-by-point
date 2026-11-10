@@ -11,19 +11,21 @@
   "devDependencies": {
     "@cloudflare/workers-types": "5.20261014.1",
     "@modelcontextprotocol/client": "2.3.1",
+    "esbuild": "0.28.2",
     "typescript": "5.9.3",
     "vitest": "5.0.4",
     "wrangler": "4.151.0"
   },
   "scripts": {
     "embed": "node scripts/embed-ui.mjs",
-    "build": "node scripts/embed-ui.mjs && wrangler deploy --dry-run --outdir dist",
+    "build": "node scripts/embed-ui.mjs && wrangler deploy --dry-run --outdir dist && node scripts/bundle-local.mjs",
     "dev": "node scripts/embed-ui.mjs && wrangler dev",
     "deploy": "node scripts/embed-ui.mjs && wrangler deploy",
-    "pretest": "node scripts/embed-ui.mjs",
+    "pretest": "node scripts/embed-ui.mjs && node scripts/bundle-local.mjs",
     "test": "vitest run",
     "pretypecheck": "node scripts/embed-ui.mjs",
     "typecheck": "tsc -p tsconfig.json",
-    "lint": "tsc -p tsconfig.json"
+    "lint": "tsc -p tsconfig.json",
+    "bundle-local": "node scripts/embed-ui.mjs && node scripts/bundle-local.mjs"
   }
 }

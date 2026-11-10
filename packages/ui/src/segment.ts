@@ -2,8 +2,6 @@ import { normalizeSpaces } from "./compose";
 
 /** Blocks whose own text is split into sentences. */
 const TEXT_BLOCKS = "p, li, h1, h2, h3, h4, h5, h6, td, th, blockquote, dt, dd";
-/** Blocks annotated as a single unit, never split. */
-const UNIT_BLOCKS = "pre";
 
 export interface Sentence {
   id: number;
@@ -11,7 +9,7 @@ export interface Sentence {
   spans: HTMLElement[];
   /** The span that takes keyboard focus. */
   focusSpan: HTMLElement;
-  /** The block the sentence belongs to (paragraph, list item, heading, cell, code block). */
+  /** The block the sentence belongs to (paragraph, list item, heading, cell). */
   block: HTMLElement;
   text: string;
 }
@@ -59,8 +57,8 @@ function ownTextNodes(block: Element): Text[] {
   const nodes: Text[] = [];
   const walker = block.ownerDocument.createTreeWalker(block, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    const owner = node.parentElement?.closest(`${TEXT_BLOCKS}, ${UNIT_BLOCKS}`);
-    if (owner === block) nodes.push(node as Text);
+    if (node.parentElement?.closest("pre")) continue;
+    if (node.parentElement?.closest(TEXT_BLOCKS) === block) nodes.push(node as Text);
   }
   return nodes;
 }
@@ -76,29 +74,14 @@ function makeSpan(doc: Document, text: string, id: number): HTMLElement {
 /**
  * Wraps every sentence of the rendered response in `span.phrase` elements, without touching links
  * or inline formatting: each text node is cut at sentence boundaries and its pieces wrapped in place.
- * Code blocks become one annotatable unit.
+ * Code blocks are left out: they are copied, not annotated.
  */
 export function segmentContainer(root: HTMLElement, locale = "fr"): Sentence[] {
   const doc = root.ownerDocument;
   const sentences: Sentence[] = [];
-  const blocks = root.querySelectorAll<HTMLElement>(`${TEXT_BLOCKS}, ${UNIT_BLOCKS}`);
+  const blocks = root.querySelectorAll<HTMLElement>(TEXT_BLOCKS);
 
   for (const block of blocks) {
-    if (block.matches(UNIT_BLOCKS)) {
-      if (block.textContent?.trim()) {
-        block.classList.add("phrase", "phrase-unit");
-        block.dataset.s = String(sentences.length);
-        sentences.push({
-          id: sentences.length,
-          spans: [block],
-          focusSpan: block,
-          block,
-          text: normalizeSpaces(block.textContent),
-        });
-      }
-      continue;
-    }
-
     const nodes = ownTextNodes(block);
     const full = nodes.map((node) => node.data).join("");
     if (!full.trim()) continue;

@@ -9,6 +9,7 @@ import {
   McpServer,
   ResourceTemplate,
   type ClientCapabilities,
+  type ServerContext,
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { UI_HTML, UI_URI, VERSION } from "./ui.generated";
@@ -133,9 +134,10 @@ const inputSchema = {
  * claude.ai keeps one tool list per connector, shared by all the user's apps, so a list served to a
  * client without interfaces (an empty one, in 0.10 to 0.20) stuck everywhere until the user
  * refreshed it. The difference is made when the tool is called: a client that cannot render the
- * interface gets a result asking Claude to write the response in the chat.
+ * interface gets a result asking Claude to write the response in the chat. `ui` is a function where
+ * the answer is only known once the client has connected (the local server, over stdio).
  */
-export function createServer(options: { ui: boolean }): McpServer {
+export function createServer(options: { ui: boolean | ((ctx: ServerContext) => boolean) }): McpServer {
   const server = new McpServer(
     { name: "point-by-point", title: "Point by point", version: VERSION },
     {
@@ -188,14 +190,15 @@ export function createServer(options: { ui: boolean }): McpServer {
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       _meta: { ui: { resourceUri: UI_URI } },
     },
-    async ({ markdown }) => {
+    async ({ markdown }, ctx) => {
       if (markdown.trim() === "") {
         return {
           isError: true,
           content: [{ type: "text", text: "The response is empty: pass the complete response as markdown." }],
         };
       }
-      if (!options.ui) return { content: [{ type: "text", text: NO_INTERFACE_RESULT_TEXT }] };
+      const ui = typeof options.ui === "function" ? options.ui(ctx) : options.ui;
+      if (!ui) return { content: [{ type: "text", text: NO_INTERFACE_RESULT_TEXT }] };
       return {
         content: [{ type: "text", text: TOOL_RESULT_TEXT }],
         structuredContent: { createdAt: Date.now() },

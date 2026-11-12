@@ -134,6 +134,46 @@ test("a drag with the mouse annotates exactly the passage it covers", async ({ p
   expect(await highlighted(frame)).toBe(1);
 });
 
+test("a drag released below the response still offers the menu, for the part inside the response", async ({ page }) => {
+  const frame = await mount(page);
+  const last = (await frame.locator("li").last().boundingBox())!;
+  const hint = (await frame.locator("#hint").boundingBox())!;
+  const words = await frame.locator("li").last().evaluate((item) => {
+    const text = item.querySelector(".phrase")!.firstChild as Text;
+    const range = document.createRange();
+    range.setStart(text, "Watch ".length);
+    range.setEnd(text, text.data.length);
+    return range.getBoundingClientRect().left - item.getBoundingClientRect().left;
+  });
+  await page.mouse.move(last.x + words + 1, last.y + last.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(last.x + last.width / 2, last.y + last.height / 2, { steps: 5 });
+  await page.mouse.move(hint.x + hint.width / 2, hint.y + hint.height / 2, { steps: 5 });
+  await page.mouse.up();
+  await expect(frame.locator(".selection-menu")).toBeVisible();
+  await frame.locator(".selection-annotate").click();
+  await expect(frame.locator(".note-quote")).toHaveText("the error rate.");
+});
+
+test("a selection of code alone offers Copy, not Annotate", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const frame = await mount(page);
+  await frame.locator("#content").evaluate((content) => {
+    const range = document.createRange();
+    range.selectNodeContents(content.querySelector("pre code")!);
+    getSelection()!.removeAllRanges();
+    getSelection()!.addRange(range);
+    content.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await expect(frame.locator(".selection-copy")).toBeVisible();
+  await expect(frame.locator(".selection-annotate")).toBeHidden();
+  await frame.locator(".selection-copy").click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("npm run migrate");
+  // A passage of text brings Annotate back.
+  await select(frame, "Watch the error rate.");
+  await expect(frame.locator(".selection-annotate")).toBeVisible();
+});
+
 test("a selection offers Copy and Annotate, next to it", async ({ page }) => {
   const frame = await mount(page);
   await select(frame, "Watch the error rate.");
@@ -266,6 +306,15 @@ test("links open through the host and do not open a note", async ({ page }) => {
   await expect(frame.locator(".note")).toHaveCount(0);
 });
 
+test("a relative link or an anchor opens nothing", async ({ page }) => {
+  const frame = await mount(page, { args: { markdown: "See [the page](/docs/page) and [the section](#section). Or [mail](mailto:a@example.com)." } });
+  await frame.locator("a", { hasText: "the page" }).click();
+  await frame.locator("a", { hasText: "the section" }).click();
+  await frame.locator("a", { hasText: "mail" }).click();
+  await expect.poll(async () => (await recorded(page)).links).toEqual(["mailto:a@example.com"]);
+  expect(page.url()).not.toContain("#section");
+});
+
 test("a note opens a new conversation prefilled with its passage and its text", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const frame = await mount(page);
@@ -331,32 +380,112 @@ test("the quote never runs under the buttons in the note's corner", async ({ pag
 
 test("works with the keyboard alone", async ({ page }) => {
   const frame = await mount(page);
-  await frame.locator(".phrase[tabindex]").first().focus();
-  await page.keyboard.press("Tab");
-  await expect(frame.locator(".phrase[tabindex]").nth(1)).toBeFocused();
-  await expect(frame.locator(".phrase[tabindex]").nth(1)).toHaveAttribute("aria-label", /^Annotate: First we migrate/);
+  // One sentence is a tab stop; the arrow keys go from sentence to sentence.
+  const stop = frame.locator(".phrase[tabindex='0']");
+  await expect(stop).toHaveCount(1);
+  await stop.focus();
+  await expect(stop).toHaveAttribute("aria-label", "Annotate: Plan");
+  await page.keyboard.press("ArrowDown");
+  await expect(stop).toHaveCount(1);
+  await expect(stop).toBeFocused();
+  await expect(stop).toHaveAttribute("role", "button");
+  await expect(stop).toHaveAttribute("aria-label", "Annotate: First we migrate the database.");
+  await expect(frame.locator(".phrase[role='button']")).toHaveCount(1);
   await page.keyboard.press("Enter");
   await expect(frame.locator(".note textarea")).toBeFocused();
   await page.keyboard.type("ok");
   await page.keyboard.press("Escape");
-  await expect(frame.locator(".phrase[tabindex]").nth(1)).toBeFocused();
-  await page.keyboard.press("Shift+Tab");
-  await expect(frame.locator(".phrase[tabindex]").first()).toBeFocused();
+  await expect(stop).toBeFocused();
+  await expect(stop).toHaveAttribute("aria-label", "Edit annotation: First we migrate the database.");
+  await page.keyboard.press("ArrowUp");
+  await expect(stop).toHaveText("Plan");
+  await expect(stop).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(stop).toHaveText("Watch the error rate.");
+  await page.keyboard.press("Home");
+  await expect(stop).toHaveText("Plan");
+  // Tab leaves the sentences for the next control: the link, then the note.
+  await page.keyboard.press("Tab");
+  await expect(frame.locator("a", { hasText: "the runbook" })).toBeFocused();
+});
+
+test("a response of any length has a single sentence in the tab order", async ({ page }) => {
+  const markdown = Array.from({ length: 60 }, (_, i) => `Sentence ${i + 1} of the response. And its follow-up.`).join("\n\n");
+  const frame = await mount(page, { args: { markdown } });
+  await expect(frame.locator(".phrase")).toHaveCount(120);
+  await expect(frame.locator(".phrase[tabindex='0']")).toHaveCount(1);
+  await expect(frame.locator(".phrase[role='button']")).toHaveCount(1);
 });
 
 test("restores drafts after a reload, also after sending", async ({ page }) => {
-  let frame = await mount(page);
+  // A host replays the stored tool result on a reload: the creation time is the same.
+  let frame = await mount(page, { createdAt: 1000 });
   await annotate(frame, "Watch the error rate.");
   await page.keyboard.type("Draft reply");
   await page.waitForTimeout(400);
 
-  frame = await mount(page);
+  frame = await mount(page, { createdAt: 1000 });
   await expect(frame.locator(".note textarea")).toHaveValue("Draft reply");
   await frame.locator("#send").click();
   await expect(frame.locator("#status")).toBeVisible();
 
-  frame = await mount(page);
+  frame = await mount(page, { createdAt: 1000 });
   await expect(frame.locator(".note textarea")).toHaveValue("Draft reply");
+});
+
+test("two responses with the same text keep their own notes", async ({ page }) => {
+  const frame = await mount(page, { args: { markdown: "Done. Anything else?" }, createdAt: 1000 });
+  await annotate(frame, "Anything else?");
+  await page.keyboard.type("Yes, one thing.");
+  await page.waitForTimeout(400);
+  await page.evaluate(() => window.mount({ args: { markdown: "Done. Anything else?" }, createdAt: 2000 }));
+  const second = page.frameLocator("iframe[data-index='1']");
+  await expect(second.locator(".phrase").first()).toBeVisible();
+  await expect(second.locator("#hint")).toBeVisible();
+  await expect(second.locator(".note")).toHaveCount(0);
+  await expect(second.locator("#send")).toBeHidden();
+  await expect(frame.locator(".note textarea")).toHaveValue("Yes, one thing.");
+});
+
+test("notes saved by an earlier release, under the text alone, are adopted", async ({ page }) => {
+  await page.goto("/");
+  // FNV-1a of the response text, as hashText computes it.
+  await page.evaluate((markdown) => {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < markdown.length; i++) hash = Math.imul(hash ^ markdown.charCodeAt(i), 0x01000193);
+    const annotations = [{ kind: "sentence", sentence: 2, start: 0, end: 0, quote: "Watch the error rate.", text: "From 0.34" }];
+    localStorage.setItem(`point-by-point:draft:${(hash >>> 0).toString(36)}`, JSON.stringify({ annotations }));
+  }, MARKDOWN);
+  await page.evaluate((markdown) => window.mount({ args: { markdown }, createdAt: 1000 }), MARKDOWN);
+  const frame = page.frameLocator("iframe").first();
+  // The saved sentence number no longer matches (it was another sentence): the note follows its quote.
+  await expect(frame.locator(".note textarea")).toHaveValue("From 0.34");
+  await expect(frame.locator(".note-quote")).toHaveText("Watch the error rate.");
+  await expect(frame.locator(".phrase.annotated")).toHaveText("Watch the error rate.");
+  const keys = await page.evaluate(() => Object.keys(localStorage).filter((key) => key.includes(":draft:")));
+  expect(keys).toHaveLength(1);
+  expect(keys[0]).toMatch(/:1000$/);
+});
+
+test("a note whose passage moved is shown where its quote reads", async ({ page }) => {
+  const frame = await mount(page, { createdAt: 1000 });
+  await annotate(frame, "switch traffic");
+  await page.keyboard.type("When?");
+  await page.waitForTimeout(400);
+  // As if another release had counted the positions differently.
+  await page.evaluate(() => {
+    const key = Object.keys(localStorage).find((candidate) => candidate.includes(":draft:"))!;
+    const draft = JSON.parse(localStorage.getItem(key)!);
+    draft.annotations[0].start += 7;
+    draft.annotations[0].end += 7;
+    localStorage.setItem(key, JSON.stringify(draft));
+  });
+  const reloaded = await mount(page, { createdAt: 1000 });
+  await expect(reloaded.locator(".note-quote")).toHaveText("switch traffic");
+  await expect(reloaded.locator(".note textarea")).toHaveValue("When?");
+  expect(await reloaded.locator("html").evaluate(() => [...CSS.highlights.get("pbp-selection")!].map(String))).toEqual([
+    "switch traffic",
+  ]);
 });
 
 test("an earlier widget adds a context line", async ({ page }) => {
@@ -378,6 +507,23 @@ test("an earlier widget adds a context line", async ({ page }) => {
     "(About an earlier response)\n\n`Watch the error rate.` Still relevant?",
     "`A newer response.` Fine.",
   ]);
+});
+
+test("a newer response in another tab, another conversation, adds no context line", async ({ page, context }) => {
+  await page.goto("/");
+  await page.evaluate((markdown) => window.mount({ args: { markdown }, createdAt: 1000 }), MARKDOWN);
+  const frame = page.frameLocator("iframe").first();
+  await expect(frame.locator(".phrase").first()).toBeVisible();
+  const other = await context.newPage();
+  await other.goto("/");
+  await other.evaluate(() => window.mount({ args: { markdown: "Another conversation." }, createdAt: 2000 }));
+  await expect(other.frameLocator("iframe").first().locator(".phrase").first()).toBeVisible();
+  await page.bringToFront();
+  await page.waitForTimeout(300);
+  await annotate(frame, "Watch the error rate.");
+  await page.keyboard.type("Still relevant?");
+  await frame.locator("#send").click();
+  await expect.poll(async () => (await recorded(page)).messages).toEqual(["`Watch the error rate.` Still relevant?"]);
 });
 
 test("offers a copy fallback when sending fails", async ({ page }) => {

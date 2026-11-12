@@ -7,12 +7,13 @@
     "build": "pnpm --filter @point-by-point/ui build && pnpm --filter @point-by-point/server build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "lint": "pnpm -r lint",
+    "check-version": "node scripts/version.mjs check",
+    "set-version": "node scripts/version.mjs set",
     "e2e": "pnpm --filter @point-by-point/ui e2e",
     "dev": "pnpm build && pnpm --filter @point-by-point/server dev",
     "deploy": "pnpm build && pnpm --filter @point-by-point/server run deploy"
   },
-  "version": "0.34.0",
+  "version": "0.35.0",
   "engines": {
     "node": ">=22"
   }

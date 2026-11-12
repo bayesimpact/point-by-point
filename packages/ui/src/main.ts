@@ -4,21 +4,26 @@ import {
   applyHostStyleVariables,
   type McpUiHostContext,
 } from "@modelcontextprotocol/ext-apps";
-import { compose, normalizeSpaces } from "./compose";
+import { writeClipboard } from "./clipboard";
+import { compose } from "./compose";
 import { renderDiagnostic, isDiagnosticRequest } from "./diagnostic";
 import { createDraftStore, hashText, type Draft, type DraftAnnotation } from "./drafts";
 import { pickLang, t, type Lang, type Strings } from "./i18n";
 import { chatAppFor, newChatModeFor, newChatPrompt, newChatUrl, type ChatApp, type NewChatMode } from "./newchat";
-import { watchRecency } from "./recency";
+import { pruneRecencyFlags, watchRecency } from "./recency";
 import { renderMarkdown } from "./render";
 import {
   indexPhrases,
+  locateQuote,
   offsetsToRange,
   pointToOffset,
+  quoteOfRange,
   segmentContainer,
   type PhraseEntry,
   type Sentence,
 } from "./segment";
+import { createSelectionMenu } from "./selection";
+import { createSheet } from "./sheet";
 import "./styles.css";
 
 declare const __APP_VERSION__: string;
@@ -46,23 +51,58 @@ const storageNotice = $<HTMLElement>("#storage-notice");
 
 const coarsePointer = window.matchMedia("(pointer: coarse)");
 const store = createDraftStore();
+store.prune();
+pruneRecencyFlags();
 
 let lang: Lang = "en";
 let s: Strings = t(lang);
 let ready = false;
 let sending = false;
 let markdown = "";
+// A response's notes are kept under its text and its creation time, which the tool result brings:
+// two responses with the same text keep their own notes. Until that time is known, and for results
+// that carry none, the text alone is the key.
+let textKey = "";
 let draftKey = "";
+let createdAt: number | null = null;
 let previous = false;
 let sentences: Sentence[] = [];
 let phrases: PhraseEntry[] = [];
+// The one sentence in the tab order; the arrow keys move it.
+let currentSentence: Sentence | null = null;
 let nextId = 1;
 const annotations = new Map<number, Annotation>();
 const noteSlots = new WeakMap<HTMLElement, HTMLElement>();
-let fullscreen = false;
-let focusTarget: HTMLElement | null = null;
 
 const app = new App({ name: "point-by-point", version: __APP_VERSION__ }, {}, { autoResize: true });
+
+function isTouch(): boolean {
+  const caps = app.getHostContext()?.deviceCapabilities;
+  return coarsePointer.matches || (caps?.touch === true && caps.hover !== true);
+}
+
+function chatApp(): ChatApp {
+  return chatAppFor(app.getHostVersion()?.name, "openai" in window);
+}
+
+const sheet = createSheet({
+  app,
+  content,
+  collapseButton: $<HTMLButtonElement>("#collapse"),
+  previousNoteButton,
+  nextNoteButton,
+  isTouch,
+  inClaude: () => chatApp() === "claude",
+});
+
+const selectionMenu = createSelectionMenu({
+  content,
+  enabled: () => ready,
+  isTouch,
+  labels: () => s,
+  canAnnotate: (range) => passageOf(range) !== null,
+  onAnnotate: annotateSelection,
+});
 
 // ---------- Host context ----------
 
@@ -77,7 +117,7 @@ function applyHostContext(context: McpUiHostContext | undefined, initial = false
     root.setProperty("--pbp-safe-top", `${context.safeAreaInsets.top}px`);
     root.setProperty("--pbp-safe-bottom", `${context.safeAreaInsets.bottom}px`);
   }
-  if (context.displayMode) setFullscreenClass(context.displayMode === "fullscreen");
+  if (context.displayMode) sheet.setFullscreen(context.displayMode === "fullscreen");
   if (!context.locale && !initial) return;
   const nextLang = pickLang(context.locale ?? navigator.language);
   if (nextLang !== lang || initial) {
@@ -85,11 +125,6 @@ function applyHostContext(context: McpUiHostContext | undefined, initial = false
     s = t(lang);
     applyLabels();
   }
-}
-
-function isTouch(): boolean {
-  const caps = app.getHostContext()?.deviceCapabilities;
-  return coarsePointer.matches || (caps?.touch === true && caps.hover !== true);
 }
 
 function applyLabels() {
@@ -103,9 +138,9 @@ function applyLabels() {
   previousNoteButton.title = s.previousNote;
   nextNoteButton.setAttribute("aria-label", s.nextNote);
   nextNoteButton.title = s.nextNote;
-  for (const sentence of sentences) labelSentence(sentence);
+  if (currentSentence) labelSentence(currentSentence);
   for (const annotation of annotations.values()) labelNote(annotation);
-  labelSelectionMenu();
+  selectionMenu.relabel();
   updateCount();
 }
 
@@ -140,9 +175,12 @@ function renderFinal(text: string, diagnostic = false) {
   if (ready && text === markdown) return;
   markdown = text;
   pendingPartial = null;
-  hideSelectionMenu();
+  selectionMenu.hide();
   for (const annotation of annotations.values()) annotation.note.remove();
   annotations.clear();
+  currentSentence = null;
+  clearTimeout(bindTimer);
+  draftKey = "";
 
   if (diagnostic) {
     content.classList.remove("streaming", "waiting");
@@ -158,26 +196,78 @@ function renderFinal(text: string, diagnostic = false) {
   content.removeAttribute("aria-busy");
   sentences = segmentContainer(content, lang);
   phrases = indexPhrases(content);
-  for (const sentence of sentences) {
-    sentence.focusSpan.tabIndex = 0;
-    sentence.focusSpan.setAttribute("role", "button");
-    labelSentence(sentence);
-  }
-  // Keyed by the response text: hosts may send the tool call id only after the input, so a key
-  // built from it could differ between the first load and a reload.
-  draftKey = hashText(text);
+  for (const sentence of sentences) sentence.focusSpan.tabIndex = -1;
+  if (sentences[0]) setCurrentSentence(sentences[0]);
+  textKey = hashText(text);
   ready = true;
   composer.hidden = false;
   storageNotice.hidden = store.durable;
-  restoreDraft();
+  if (createdAt !== null) bindDraft(`${textKey}:${createdAt}`);
+  // A host that sends no result, or a late one: the notes saved under the text alone show meanwhile.
+  else bindTimer = setTimeout(() => bindDraft(textKey), 1500);
   updateCount();
 }
 
-function labelSentence(sentence: Sentence) {
-  const start = sentence.text.length > 60 ? `${sentence.text.slice(0, 60)}…` : sentence.text;
-  const annotated = sentenceAnnotation(sentence.id) !== undefined;
-  sentence.focusSpan.setAttribute("aria-label", annotated ? s.editAnnotation(start) : s.annotate(start));
+// ---------- Sentences and the keyboard ----------
+
+/**
+ * One sentence is in the tab order, as a button named after its whole text; the arrow keys move
+ * from sentence to sentence. Every sentence a tab stop and a button would make hundreds of stops,
+ * and a screen reader would read the response as a list of buttons.
+ */
+function setCurrentSentence(sentence: Sentence) {
+  if (currentSentence === sentence) return;
+  if (currentSentence) {
+    currentSentence.focusSpan.tabIndex = -1;
+    currentSentence.focusSpan.removeAttribute("role");
+    currentSentence.focusSpan.removeAttribute("aria-label");
+  }
+  currentSentence = sentence;
+  sentence.focusSpan.tabIndex = 0;
+  sentence.focusSpan.setAttribute("role", "button");
+  labelSentence(sentence);
 }
+
+function labelSentence(sentence: Sentence) {
+  if (sentence !== currentSentence) return;
+  const annotated = sentenceAnnotation(sentence.id) !== undefined;
+  sentence.focusSpan.setAttribute("aria-label", annotated ? s.editAnnotation(sentence.text) : s.annotate(sentence.text));
+}
+
+function sentenceOf(target: EventTarget | null): Sentence | undefined {
+  const phrase = target instanceof Element ? target.closest<HTMLElement>(".phrase[data-s]") : null;
+  if (!phrase || phrase.closest(".note")) return undefined;
+  return sentences[Number(phrase.dataset.s)];
+}
+
+content.addEventListener("focusin", (event) => {
+  const sentence = sentenceOf(event.target);
+  if (sentence && sentence.focusSpan === event.target) setCurrentSentence(sentence);
+});
+
+const SENTENCE_KEYS: Record<string, (index: number) => number> = {
+  ArrowDown: (index) => index + 1,
+  ArrowRight: (index) => index + 1,
+  ArrowUp: (index) => index - 1,
+  ArrowLeft: (index) => index - 1,
+  Home: () => 0,
+  End: () => sentences.length - 1,
+};
+
+content.addEventListener("keydown", (event) => {
+  if (!ready || event.altKey || event.ctrlKey || event.metaKey) return;
+  const sentence = sentenceOf(event.target);
+  if (!sentence || sentence.focusSpan !== event.target) return;
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    annotateSentence(sentence);
+    return;
+  }
+  const move = SENTENCE_KEYS[event.key];
+  if (!move || event.shiftKey) return;
+  event.preventDefault();
+  sentences[move(sentences.indexOf(sentence))]?.focusSpan.focus();
+});
 
 // ---------- Annotations ----------
 
@@ -261,10 +351,10 @@ function createAnnotation(draft: DraftAnnotation, options: { focus: boolean }): 
     notesChanged();
   });
   textarea.addEventListener("focus", () => {
-    if (isTouch()) enterFocusMode(note);
+    if (isTouch()) sheet.enterFocusMode(note);
   });
   textarea.addEventListener("keydown", (event) => onFieldKeydown(event, annotation));
-  done.addEventListener("click", () => leaveFocusMode());
+  done.addEventListener("click", () => sheet.leaveFocusMode());
   remove.addEventListener("click", () => removeAnnotation(annotation));
   newChat.addEventListener("click", () => void openNewChat(annotation));
 
@@ -291,10 +381,6 @@ function labelNote(annotation: Annotation) {
   const label = newChatMode() === "copy" ? s.newChatCopy : s.newChat;
   newChat.textContent = label;
   newChat.title = label;
-}
-
-function chatApp(): ChatApp {
-  return chatAppFor(app.getHostVersion()?.name, "openai" in window);
 }
 
 function newChatMode(): NewChatMode {
@@ -336,15 +422,22 @@ function openNote(annotation: Annotation) {
     annotation.textarea.focus();
     return;
   }
-  if (inSheet()) {
-    enterFocusMode(annotation.note);
+  if (sheet.inSheet()) {
+    sheet.enterFocusMode(annotation.note);
     window.scrollTo(0, 0);
     return;
   }
   annotation.note.scrollIntoView({ block: "nearest", behavior: "smooth" });
   if (app.getHostContext()?.availableDisplayModes?.includes("fullscreen")) {
-    void enterFullscreen(annotation.note);
+    void sheet.enterFullscreen(annotation.note);
   }
+}
+
+/** Where a sentence sits in the response text. */
+function sentenceOffsets(sentence: Sentence): { start: number; end: number } {
+  const first = phrases.find((entry) => entry.el === sentence.spans[0]);
+  const last = phrases.find((entry) => entry.el === sentence.spans.at(-1));
+  return { start: first?.start ?? 0, end: last?.end ?? 0 };
 }
 
 function annotateSentence(sentence: Sentence) {
@@ -353,50 +446,38 @@ function annotateSentence(sentence: Sentence) {
     openNote(existing);
     return;
   }
-  const first = phrases.find((entry) => entry.el === sentence.spans[0]);
-  const last = phrases.find((entry) => entry.el === sentence.spans.at(-1));
   createAnnotation(
-    {
-      kind: "sentence",
-      sentence: sentence.id,
-      start: first?.start ?? 0,
-      end: last?.end ?? 0,
-      quote: sentence.text,
-      text: "",
-    },
+    { kind: "sentence", sentence: sentence.id, ...sentenceOffsets(sentence), quote: sentence.text, text: "" },
     { focus: true },
   );
   notesChanged();
 }
 
-function annotateSelection(range: Range) {
+/** What a selection would annotate, or null when it holds nothing to quote (code alone, a few characters). */
+function passageOf(range: Range): { start: number; end: number; quote: string } | null {
+  if (phrases.length === 0) return null;
   const start = pointToOffset(phrases, range.startContainer, range.startOffset);
   const end = pointToOffset(phrases, range.endContainer, range.endOffset);
-  const quote = quoteOf(range);
-  if (end <= start || quote.length <= 2) return;
+  const quote = quoteOfRange(range);
+  return end > start && quote.length > 2 ? { start, end, quote } : null;
+}
+
+function annotateSelection(range: Range) {
+  const passage = passageOf(range);
+  if (!passage) return;
   for (const annotation of annotations.values()) {
-    if (annotation.kind === "selection" && annotation.start === start && annotation.end === end) {
+    if (annotation.kind === "selection" && annotation.start === passage.start && annotation.end === passage.end) {
       openNote(annotation);
       return;
     }
   }
   window.getSelection()?.removeAllRanges();
-  createAnnotation({ kind: "selection", start, end, quote, text: "" }, { focus: true });
+  createAnnotation({ kind: "selection", ...passage, text: "" }, { focus: true });
   notesChanged();
 }
 
-/** The selected response text, without the text of any note it crosses. */
-function quoteOf(range: Range): string {
-  const fragment = range.cloneContents();
-  for (const skipped of fragment.querySelectorAll(".note-slot, .note, .code-block")) skipped.remove();
-  for (const block of fragment.querySelectorAll("p, li, h1, h2, h3, h4, h5, h6, td, th, pre, dt, dd")) {
-    block.append(" ");
-  }
-  return normalizeSpaces(fragment.textContent ?? "");
-}
-
 function removeAnnotation(annotation: Annotation) {
-  if (focusTarget === annotation.note) leaveFocusMode({ restoreFocus: false });
+  if (sheet.focusTarget() === annotation.note) sheet.leaveFocusMode({ restoreFocus: false });
   annotations.delete(annotation.id);
   annotation.note.remove();
   refreshHighlights();
@@ -440,82 +521,6 @@ function refreshHighlights() {
   }
 }
 
-// ---------- Mobile focus mode and fullscreen ----------
-
-// In fullscreen, the Claude iOS app lays a translucent title bar (about 100px with the status bar)
-// over the top of the frame, and its "Reply to Claude" field (about 140px with the home indicator)
-// over the bottom, without reporting either as a safe area: keep the sheet's content between them.
-const MOBILE_FULLSCREEN_HEADER = 100;
-const MOBILE_FULLSCREEN_FOOTER = 150;
-
-function setFullscreenClass(on: boolean) {
-  fullscreen = on;
-  document.body.classList.toggle("fullscreen", on);
-  if (on) {
-    const context = app.getHostContext();
-    const mobile = context?.platform === "mobile" || isTouch();
-    const top = Math.max(context?.safeAreaInsets?.top ?? 0, mobile ? MOBILE_FULLSCREEN_HEADER : 0);
-    const bottom = Math.max(context?.safeAreaInsets?.bottom ?? 0, mobile ? MOBILE_FULLSCREEN_FOOTER : 0);
-    document.documentElement.style.setProperty("--pbp-sheet-top", `${top + 12}px`);
-    document.documentElement.style.setProperty("--pbp-sheet-bottom", `${bottom}px`);
-  }
-  if (!on && inSheet()) leaveSheet({ fromHost: true });
-}
-
-function inSheet(): boolean {
-  return document.body.classList.contains("sheet");
-}
-
-async function enterFullscreen(target: HTMLElement) {
-  try {
-    const result = await app.requestDisplayMode({ mode: "fullscreen" });
-    if (result.mode !== "fullscreen") return;
-    setFullscreenClass(true);
-    document.body.classList.add("sheet");
-    enterFocusMode(target);
-  } catch {
-    // Refused or unsupported: the focus mode takes over when the field gets focus.
-  }
-}
-
-function enterFocusMode(target: HTMLElement) {
-  if (focusTarget && focusTarget !== target) focusTarget.classList.remove("active");
-  focusTarget = target;
-  target.classList.add("active");
-  document.body.classList.add("focus-mode");
-}
-
-// Leaving a note keeps the sheet fullscreen: the frame scrolls itself there, so the note stays in
-// view and the next point is a tap away. Back inline, the host owns the scroll and sends it to the
-// bottom of the conversation.
-function leaveFocusMode(options: { restoreFocus?: boolean } = {}) {
-  const target = focusTarget;
-  if (!target) return;
-  focusTarget = null;
-  target.classList.remove("active");
-  document.body.classList.remove("focus-mode");
-  (document.activeElement as HTMLElement | null)?.blur();
-  const block = inSheet() ? "center" : "nearest";
-  if (target.classList.contains("note")) noteAnchor = target;
-  requestAnimationFrame(() => {
-    target.scrollIntoView({ block });
-    updateNoteNav();
-  });
-  if (options.restoreFocus !== false && !isTouch()) target.querySelector("textarea")?.focus();
-}
-
-function leaveSheet(options: { fromHost?: boolean } = {}) {
-  if (focusTarget) leaveFocusMode({ restoreFocus: false });
-  if (!inSheet()) return;
-  document.body.classList.remove("sheet");
-  if (fullscreen && !options.fromHost) {
-    void app.requestDisplayMode({ mode: "inline" }).catch(() => undefined);
-    setFullscreenClass(false);
-  }
-}
-
-$<HTMLButtonElement>("#collapse").addEventListener("click", () => leaveSheet());
-
 // ---------- Keyboard ----------
 
 function onFieldKeydown(event: KeyboardEvent, annotation: Annotation | null) {
@@ -526,19 +531,10 @@ function onFieldKeydown(event: KeyboardEvent, annotation: Annotation | null) {
   }
   if (event.key !== "Escape") return;
   event.preventDefault();
-  if (focusTarget) leaveFocusMode({ restoreFocus: false });
+  if (sheet.focusTarget()) sheet.leaveFocusMode({ restoreFocus: false });
   (event.target as HTMLElement).blur();
   if (annotation) focusSpanFor(annotation)?.focus();
 }
-
-content.addEventListener("keydown", (event) => {
-  if (!ready || (event.key !== "Enter" && event.key !== " ")) return;
-  const phrase = (event.target as HTMLElement).closest<HTMLElement>(".phrase[data-s]");
-  if (!phrase || phrase.closest(".note")) return;
-  event.preventDefault();
-  const sentence = sentences[Number(phrase.dataset.s)];
-  if (sentence) annotateSentence(sentence);
-});
 
 // ---------- Pointer ----------
 
@@ -547,8 +543,9 @@ content.addEventListener("click", (event) => {
   const link = target.closest("a");
   if (link) {
     event.preventDefault();
-    const href = link.href;
-    if (/^(https?:|mailto:)/i.test(href)) void app.openLink({ url: href }).catch(() => undefined);
+    // The address as written: a relative one or an anchor would resolve to this frame's own address.
+    const href = link.getAttribute("href") ?? "";
+    if (/^(https?:|mailto:)/i.test(href)) void app.openLink({ url: link.href }).catch(() => undefined);
     return;
   }
   if (!ready || target.closest(".note")) return;
@@ -558,171 +555,8 @@ content.addEventListener("click", (event) => {
   if (pointer ? pointer === "mouse" : !isTouch()) return;
   const selection = window.getSelection();
   if (selection && !selection.isCollapsed && content.contains(selection.anchorNode)) return;
-  const phrase = target.closest<HTMLElement>(".phrase[data-s]");
-  const sentence = phrase && sentences[Number(phrase.dataset.s)];
+  const sentence = sentenceOf(target);
   if (sentence) annotateSentence(sentence);
-});
-
-/** True while the user types in a note: selections there belong to the field. */
-function editingText(): boolean {
-  const active = document.activeElement;
-  return !!active && (active.tagName === "TEXTAREA" || active.tagName === "INPUT");
-}
-
-function selectionInContent(): Range | null {
-  if (editingText()) return null;
-  const selection = window.getSelection();
-  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
-  const range = selection.getRangeAt(0);
-  const inside = (node: Node) => {
-    const element = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
-    return !!element && content.contains(element) && !element.closest(".note");
-  };
-  if (!inside(range.startContainer) || !inside(range.endContainer)) return null;
-  return selection.toString().trim().length > 2 ? range : null;
-}
-
-// ---------- Selection menu ----------
-
-// A selection offers two actions next to it: copy the passage, or annotate it.
-const selectionMenu = document.createElement("div");
-selectionMenu.className = "selection-menu";
-selectionMenu.setAttribute("role", "toolbar");
-selectionMenu.hidden = true;
-const menuCopy = document.createElement("button");
-menuCopy.type = "button";
-menuCopy.className = "selection-copy";
-const menuAnnotate = document.createElement("button");
-menuAnnotate.type = "button";
-menuAnnotate.className = "selection-annotate";
-selectionMenu.append(menuCopy, menuAnnotate);
-document.body.append(selectionMenu);
-
-let menuRange: Range | null = null;
-let menuTimer: ReturnType<typeof setTimeout> | undefined;
-
-function labelSelectionMenu() {
-  selectionMenu.setAttribute("aria-label", s.selectionMenu);
-  if (!menuCopy.dataset.state) menuCopy.textContent = s.selectionCopy;
-  menuAnnotate.textContent = s.selectionAnnotate;
-}
-
-function showSelectionMenu(range: Range) {
-  clearTimeout(menuTimer);
-  menuRange = range.cloneRange();
-  delete menuCopy.dataset.state;
-  labelSelectionMenu();
-  selectionMenu.hidden = false;
-  placeSelectionMenu(range);
-}
-
-function hideSelectionMenu() {
-  clearTimeout(menuTimer);
-  selectionMenu.hidden = true;
-  menuRange = null;
-}
-
-/**
- * Above the start of the selection with a mouse; below its end on touch, where the system's own
- * selection menu takes the space above.
- */
-function placeSelectionMenu(range: Range) {
-  const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 || rect.height > 0);
-  const first = rects[0] ?? range.getBoundingClientRect();
-  const last = rects.at(-1) ?? first;
-  const menu = selectionMenu.getBoundingClientRect();
-  const gap = 8;
-  const above = !isTouch() && first.top - menu.height - gap >= 0;
-  const anchor = above ? first : last;
-  const top = above ? first.top - menu.height - gap : last.bottom + gap;
-  const width = document.documentElement.clientWidth;
-  const center = anchor.left + anchor.width / 2;
-  const left = Math.min(Math.max(center - menu.width / 2, gap), Math.max(gap, width - menu.width - gap));
-  selectionMenu.style.top = `${top + window.scrollY}px`;
-  selectionMenu.style.left = `${left + window.scrollX}px`;
-}
-
-function sameRange(a: Range, b: Range): boolean {
-  return a.compareBoundaryPoints(Range.START_TO_START, b) === 0 && a.compareBoundaryPoints(Range.END_TO_END, b) === 0;
-}
-
-/** The selected text as it reads on screen, line breaks included, without the notes it crosses. */
-function plainTextOf(range: Range): string {
-  const holder = document.createElement("div");
-  holder.className = "copy-holder";
-  holder.append(range.cloneContents());
-  for (const skipped of holder.querySelectorAll(".note-slot, .note, button")) skipped.remove();
-  content.append(holder);
-  const text = holder.innerText ?? holder.textContent ?? "";
-  holder.remove();
-  return text.trim();
-}
-
-// The menu keeps the selection: a press on it does not move the focus or the caret. A finger on it
-// can still clear the selection before the tap lands, so the menu stays while it is pressed.
-let pressingMenu = false;
-selectionMenu.addEventListener("mousedown", (event) => event.preventDefault());
-selectionMenu.addEventListener("pointerdown", () => {
-  pressingMenu = true;
-});
-for (const type of ["click", "pointercancel"]) {
-  selectionMenu.addEventListener(type, () => setTimeout(() => (pressingMenu = false), 0));
-}
-
-menuCopy.addEventListener("click", async () => {
-  const range = menuRange;
-  if (!range) return;
-  const copied = await copyCode(plainTextOf(range));
-  menuCopy.dataset.state = copied ? "copied" : "failed";
-  menuCopy.textContent = copied ? s.selectionCopied : s.selectionCopyFailed;
-  clearTimeout(menuTimer);
-  menuTimer = setTimeout(hideSelectionMenu, 1200);
-});
-
-menuAnnotate.addEventListener("click", () => {
-  const range = menuRange;
-  hideSelectionMenu();
-  if (range) annotateSelection(range);
-});
-
-selectionMenu.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape") return;
-  event.preventDefault();
-  hideSelectionMenu();
-});
-
-content.addEventListener("mouseup", (event) => {
-  if (!ready || isTouch() || (event.target as HTMLElement).closest(".note")) return;
-  setTimeout(() => {
-    const range = selectionInContent();
-    if (range) showSelectionMenu(range);
-  }, 0);
-});
-
-// A changed or cleared selection takes the menu away. On touch, the selection handles keep moving
-// after the finger lifts: the menu waits until the selection settles.
-let selectionTimer: ReturnType<typeof setTimeout> | undefined;
-document.addEventListener("selectionchange", () => {
-  if (!ready) return;
-  if (menuRange && !menuCopy.dataset.state && !pressingMenu) {
-    const selection = window.getSelection();
-    const current = selection && selection.rangeCount > 0 && !selection.isCollapsed ? selection.getRangeAt(0) : null;
-    if (!current || !sameRange(current, menuRange)) hideSelectionMenu();
-  }
-  if (!isTouch()) return;
-  clearTimeout(selectionTimer);
-  if (editingText()) return;
-  selectionTimer = setTimeout(() => {
-    const range = selectionInContent();
-    if (range && !(menuRange && sameRange(range, menuRange))) showSelectionMenu(range);
-  }, 900);
-});
-
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !selectionMenu.hidden) hideSelectionMenu();
-});
-window.addEventListener("resize", () => {
-  if (menuRange) placeSelectionMenu(menuRange);
 });
 
 // ---------- Counter, drafts ----------
@@ -748,65 +582,8 @@ function updateCount() {
     sendButton.hidden = count === 0;
   }
   hintLabel.hidden = count > 0;
-  updateNoteNav();
+  sheet.updateNoteNav();
 }
-
-// ---------- Note navigation (fullscreen sheet) ----------
-
-// The note last reached (by the arrows or by Done). Near the end of the response a note cannot be
-// scrolled to the middle, so while it is on screen, the arrows go from it rather than from the middle.
-let noteAnchor: HTMLElement | null = null;
-
-function onScreen(element: HTMLElement): boolean {
-  const rect = element.getBoundingClientRect();
-  return rect.bottom > 0 && rect.top < window.innerHeight;
-}
-
-/** The note before or after the current one, in document order. */
-function adjacentNote(direction: "previous" | "next"): HTMLElement | undefined {
-  const notes = Array.from(content.querySelectorAll<HTMLElement>(".note"));
-  const anchor = noteAnchor ? notes.indexOf(noteAnchor) : -1;
-  if (anchor >= 0 && onScreen(notes[anchor]!)) return notes[direction === "next" ? anchor + 1 : anchor - 1];
-  const middle = window.innerHeight / 2;
-  if (direction === "next") return notes.find((note) => note.getBoundingClientRect().top > middle + 1);
-  return notes.findLast((note) => note.getBoundingClientRect().bottom < middle - 1);
-}
-
-function updateNoteNav() {
-  previousNoteButton.disabled = !adjacentNote("previous");
-  nextNoteButton.disabled = !adjacentNote("next");
-}
-
-function goToNote(direction: "previous" | "next") {
-  const note = adjacentNote(direction);
-  if (!note) return;
-  noteAnchor = note;
-  note.scrollIntoView({ block: "center" });
-  note.classList.remove("arrived");
-  void note.offsetWidth; // restart the glow when the same note is reached again
-  note.classList.add("arrived");
-  updateNoteNav();
-}
-
-content.addEventListener("animationend", (event) => {
-  if (event.animationName === "pbp-arrive") (event.target as HTMLElement).classList.remove("arrived");
-});
-
-previousNoteButton.addEventListener("click", () => goToNote("previous"));
-nextNoteButton.addEventListener("click", () => goToNote("next"));
-
-let navFrame = 0;
-window.addEventListener(
-  "scroll",
-  () => {
-    if (!inSheet() || navFrame) return;
-    navFrame = requestAnimationFrame(() => {
-      navFrame = 0;
-      updateNoteNav();
-    });
-  },
-  { passive: true },
-);
 
 /** After a note is added, edited or removed: the status of the last send no longer holds. */
 function notesChanged() {
@@ -835,16 +612,69 @@ function currentDraft(): Draft {
 
 function saveDraft() {
   clearTimeout(saveTimer);
-  if (draftKey) store.save(draftKey, currentDraft());
+  const key = draftKey || textKey;
+  if (key) store.save(key, currentDraft());
 }
 
-function restoreDraft() {
-  const draft = store.load(draftKey);
-  if (!draft) return;
-  for (const saved of draft.annotations) {
-    if (saved.kind === "sentence" && (saved.sentence === undefined || !sentences[saved.sentence])) continue;
-    createAnnotation(saved, { focus: false });
+/**
+ * Sets where this response's notes are kept, and shows the notes saved there. Notes saved under the
+ * text alone (before the creation time was known, or by a release that had no other key) move to it.
+ */
+let bindTimer: ReturnType<typeof setTimeout> | undefined;
+function bindDraft(key: string) {
+  clearTimeout(bindTimer);
+  if (!ready || !textKey || key === draftKey) return;
+  draftKey = key;
+  let draft = store.load(key);
+  if (!draft && key !== textKey) {
+    draft = store.load(textKey);
+    store.clear(textKey);
   }
+  if (draft) restoreDraft(draft);
+  if (annotations.size > 0) saveDraft();
+  updateCount();
+}
+
+function restoreDraft(draft: Draft) {
+  if (phrases.length === 0) return;
+  for (const saved of draft.annotations) {
+    const placed = placeSaved(saved);
+    const shown = Array.from(annotations.values()).some(
+      (annotation) =>
+        annotation.kind === placed.kind &&
+        annotation.start === placed.start &&
+        annotation.end === placed.end &&
+        annotation.quote === placed.quote,
+    );
+    if (!shown) createAnnotation(placed, { focus: false });
+  }
+}
+
+/**
+ * Checks that a saved note still sits on the text it quotes. Positions depend on how the response
+ * was split into sentences, which a release or a change of language can alter: a note that no longer
+ * matches is moved to where its quote reads, or, when the quote cannot be found, kept at its place
+ * without a highlight. A note is never dropped.
+ */
+function placeSaved(saved: DraftAnnotation): DraftAnnotation {
+  if (saved.kind === "sentence") {
+    const same = saved.sentence !== undefined ? sentences[saved.sentence] : undefined;
+    const sentence =
+      same?.text === saved.quote
+        ? same
+        : sentences
+            .filter((candidate) => candidate.text === saved.quote)
+            .sort((a, b) => Math.abs(sentenceOffsets(a).start - saved.start) - Math.abs(sentenceOffsets(b).start - saved.start))[0];
+    if (sentence) return { ...saved, sentence: sentence.id, ...sentenceOffsets(sentence) };
+  } else {
+    const range = offsetsToRange(phrases, saved.start, saved.end);
+    if (range && quoteOfRange(range) === saved.quote) return saved;
+  }
+  const found = locateQuote(phrases, saved.quote, saved.start);
+  if (found) return { kind: "selection", ...found, quote: saved.quote, text: saved.text };
+  const end = phrases.at(-1)?.end ?? 0;
+  const start = Math.min(Math.max(saved.start, 0), Math.max(end - 1, 0));
+  return { kind: "selection", start, end: start, quote: saved.quote, text: saved.text };
 }
 
 window.addEventListener("pagehide", saveDraft);
@@ -893,8 +723,8 @@ async function send() {
   try {
     const result = await app.sendMessage({ role: "user", content: [{ type: "text", text: message }] });
     if (result.isError) throw new Error("rejected");
-    leaveSheet();
-    if (focusTarget) leaveFocusMode({ restoreFocus: false });
+    sheet.leaveSheet();
+    if (sheet.focusTarget()) sheet.leaveFocusMode({ restoreFocus: false });
     statusLabel.textContent = sentStatus();
     statusLabel.hidden = false;
   } catch {
@@ -909,58 +739,25 @@ async function send() {
 
 sendButton.addEventListener("click", () => void send());
 
-/**
- * Copies through the clipboard API, or else from the fallback box, which then stays shown with the
- * text so it can be copied by hand.
- */
+/** Copies a message; when the clipboard refuses, shows it in the fallback box to be copied by hand. */
 async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    fallbackText.value = text;
-    fallbackBox.hidden = false;
-    fallbackText.focus();
-    fallbackText.select();
-    return document.execCommand?.("copy") ?? false;
-  }
+  if (await writeClipboard(text)) return true;
+  fallbackText.value = text;
+  fallbackBox.hidden = false;
+  fallbackText.focus();
+  fallbackText.select();
+  return false;
 }
 
 function labelCodeButtons() {
   for (const button of content.querySelectorAll(".code-copy")) button.setAttribute("aria-label", s.codeCopy);
 }
 
-/**
- * Puts text on the clipboard without opening the message fallback box. Where the clipboard API is
- * refused (a frame without focus), copies from a hidden field, then gives the selection back.
- */
-async function copyCode(code: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(code);
-    return true;
-  } catch {
-    const selection = window.getSelection();
-    const kept = selection && selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null;
-    const box = document.createElement("textarea");
-    box.value = code;
-    box.style.cssText = "position:fixed;opacity:0;top:0;left:0";
-    document.body.append(box);
-    box.select();
-    const copied = document.execCommand?.("copy") ?? false;
-    box.remove();
-    if (kept) {
-      selection!.removeAllRanges();
-      selection!.addRange(kept);
-    }
-    return copied;
-  }
-}
-
 content.addEventListener("click", async (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".code-copy");
   const code = button?.parentElement?.querySelector("pre")?.textContent;
   if (!button || code == null) return;
-  const copied = await copyCode(code.replace(/\n$/, ""));
+  const copied = await writeClipboard(code.replace(/\n$/, ""));
   button.dataset.state = copied ? "copied" : "failed";
   button.setAttribute("aria-label", copied ? s.codeCopied : s.codeCopyFailed);
   setTimeout(() => {
@@ -989,21 +786,26 @@ app.addEventListener("toolinput", (params) => {
   startRecencyWatch();
 });
 
-// The tool result carries the response's creation time, used to tell earlier responses apart.
-let createdAt: number | null = null;
+// The tool result carries the response's creation time: it keys the notes, and tells earlier
+// responses apart.
 let watchingRecency = false;
 function startRecencyWatch() {
-  if (watchingRecency || createdAt === null || !draftKey) return;
+  if (watchingRecency || createdAt === null || !textKey) return;
   watchingRecency = true;
-  watchRecency(`${draftKey}:${createdAt}`, createdAt, () => {
+  watchRecency(`${textKey}:${createdAt}`, createdAt, () => {
     previous = true;
   });
 }
 
 app.addEventListener("toolresult", (params) => {
   const value = (params.structuredContent as { createdAt?: unknown } | undefined)?.createdAt;
-  if (typeof value !== "number") return;
+  if (typeof value !== "number") {
+    // A result without a creation time (an earlier release's): the text alone stays the key.
+    if (createdAt === null) bindDraft(textKey);
+    return;
+  }
   createdAt = value;
+  bindDraft(`${textKey}:${createdAt}`);
   startRecencyWatch();
 });
 

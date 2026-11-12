@@ -29,7 +29,8 @@ export const TOOL_DESCRIPTION =
   "the interface shows them as the user's points.";
 
 // The skill's rules, for users who added the connector without the skill: hosts give these
-// instructions to the model, so the connector works on its own. Keep in step with plugin/skills.
+// instructions to the model, so the connector works on its own. test/rules.test.ts checks that the
+// description above, these instructions and plugin/skills state the same rules.
 export const SERVER_INSTRUCTIONS = [
   `Send every response meant for the user through ${TOOL_NAME}, short or long, instead of writing it in the ` +
     "chat. Not for intermediate work the user does not need to read (tool calls, file edits in progress).",

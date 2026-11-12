@@ -154,6 +154,19 @@ test("the fullscreen sheet keeps the note below the host title bar", async ({ pa
   expect(top).toBeGreaterThanOrEqual(100);
 });
 
+test("outside Claude, the sheet keeps to the safe areas the host reports", async ({ page }) => {
+  const frame = await mount(page, {
+    allowFullscreen: true,
+    hostName: "chatgpt",
+    context: { platform: "mobile", safeAreaInsets: { top: 20, right: 0, bottom: 0, left: 0 } },
+  });
+  await frame.locator(".phrase", { hasText: "First point here." }).tap();
+  await expect(frame.locator("body")).toHaveClass(/sheet/);
+  const top = await frame.locator(".note.active").evaluate((note) => note.getBoundingClientRect().top);
+  expect(top).toBeGreaterThanOrEqual(20);
+  expect(top).toBeLessThan(100);
+});
+
 test("between notes, Send sits above the host's reply field", async ({ page }) => {
   const markdown = Array.from({ length: 40 }, (_, i) => `Paragraph ${i + 1} has a sentence.`).join("\n\n");
   const frame = await mount(page, { allowFullscreen: true, args: { markdown }, context: { platform: "mobile" } });

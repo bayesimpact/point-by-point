@@ -25,7 +25,6 @@
     "test": "vitest run",
     "pretypecheck": "node scripts/embed-ui.mjs",
     "typecheck": "tsc -p tsconfig.json",
-    "lint": "tsc -p tsconfig.json",
     "bundle-local": "node scripts/embed-ui.mjs && node scripts/bundle-local.mjs"
   }
 }

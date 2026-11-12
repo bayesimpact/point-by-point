@@ -48,6 +48,9 @@ export function renderMarkdown(markdown: string, doc: Document = document): Docu
   const fragment = purify.sanitize(html, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
+    // The interface keeps its own state in data-* and aria-* attributes: none may come from the response.
+    ALLOW_DATA_ATTR: false,
+    ALLOW_ARIA_ATTR: false,
     RETURN_DOM_FRAGMENT: true,
   }) as DocumentFragment;
   for (const table of fragment.querySelectorAll("table")) wrapTable(table, doc);

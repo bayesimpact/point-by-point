@@ -19,36 +19,68 @@ export interface TextRange {
   end: number;
 }
 
-// Intl.Segmenter breaks after these when the next word is capitalised ("M. Dupont", "Dr. Smith").
-const ABBREVIATION = new RegExp(
-  "(?:^|[\\s(«\"'])(?:" +
-    [
-      "M", "MM", "Mme", "Mmes", "Mlle", "Mlles", "Dr", "Pr", "Me", "Mgr", "St", "Ste",
-      "Mr", "Mrs", "Ms", "Prof", "Sr", "Jr", "Inc", "Ltd", "Co", "Corp", "Gen", "Gov", "Sen", "Rep",
-      "cf", "p", "pp", "ex", "env", "vol", "no", "n°", "art", "chap", "fig", "éd", "ed", "réf", "ref",
-      "vs", "approx", "av", "apr", "J.-C", "e\\.g", "i\\.e", "a\\.k\\.a", "U\\.S", "U\\.K",
-      "[A-ZÀ-Ý]",
-    ].join("|") +
-    ")\\.$",
-  "u",
+// Intl.Segmenter ends a sentence after an abbreviation when the next word is capitalised
+// ("M. Dupont", "Dr. Smith"). Three kinds of endings are joined to what follows.
+const endsWith = (words: readonly string[]) => new RegExp(`(?:^|[\\s(«"'])(?:${words.join("|")})\\.$`, "u");
+
+// Titles and abbreviations that are not words of their own: always joined.
+const ABBREVIATION = endsWith([
+  "M", "MM", "Mme", "Mmes", "Mlle", "Mlles", "Dr", "Pr", "Me", "Mgr", "St", "Ste",
+  "Mr", "Mrs", "Ms", "Prof", "Sr", "Jr", "Inc", "Ltd", "Co", "Corp", "Gen", "Gov", "Sen", "Rep",
+  "cf", "ex", "env", "éd", "ed", "réf", "ref", "vs", "approx", "av", "apr",
+  "J.-C", "e\\.g", "i\\.e", "a\\.k\\.a", "U\\.S", "U\\.K",
+]);
+
+// Abbreviations that are also everyday words ("the answer is no.", "c'est de l'art.", "un vol."):
+// joined only to a number ("no. 5", "vol. II", "art. 12").
+const NUMBERED = endsWith(["[Nn]o", "[Nn]°", "pp?", "[Vv]ol", "[Aa]rt", "[Ff]ig", "[Cc]hap"]);
+const STARTS_WITH_NUMBER = /^[\s(]*(?:\d|[IVXLCDM]{2,}\b)/;
+
+// A capital letter alone is an initial ("J. R. R. Tolkien") or the end of a sentence ("option A.
+// Then…"): joined to another initial, or to a capitalised word that does not usually open a sentence.
+const INITIAL = endsWith(["\\p{Lu}"]);
+const STARTS_WITH_INITIAL = /^\s*\p{Lu}\.(?:\s|$)/u;
+const FIRST_WORD = /^[\s(«"']*(\p{L}+)/u;
+const SENTENCE_OPENERS = new Set(
+  (
+    "the a an this that these those it its he she we you they i there here then but and or so if when while as in on " +
+    "at for with to from by after before next now also however otherwise both each all no not yes what why how " +
+    "which who where is are do does can let use see note my your our their his her " +
+    "le la les l un une des du de ce cet cette ces il elle ils elles on nous vous je tu j c mais et ou donc car si " +
+    "quand puis ensuite alors ainsi enfin dans sur pour avec sans par en à au aux après avant voici voilà oui non " +
+    "pas que qui quoi comment pourquoi où est sont mon ma mes ton ta tes son sa ses notre votre leur leurs tout " +
+    "tous toute chaque"
+  ).split(" "),
 );
+
+/** True when a segment ends with an abbreviation or an initial, not with the end of its sentence. */
+function joinsNext(segment: string, next: string | undefined): boolean {
+  const end = segment.trimEnd();
+  if (ABBREVIATION.test(end)) return true;
+  if (next === undefined) return false;
+  if (NUMBERED.test(end)) return STARTS_WITH_NUMBER.test(next);
+  if (!INITIAL.test(end)) return false;
+  if (STARTS_WITH_INITIAL.test(next)) return true;
+  const word = FIRST_WORD.exec(next)?.[1];
+  return word !== undefined && /^\p{Lu}/u.test(word) && !SENTENCE_OPENERS.has(word.toLowerCase());
+}
 
 /** Splits text into sentence ranges, keeping abbreviations and initials inside their sentence. */
 export function splitSentences(text: string, locale = "fr"): TextRange[] {
   const segmenter = new Intl.Segmenter(locale, { granularity: "sentence" });
+  const segments = Array.from(segmenter.segment(text));
   const ranges: TextRange[] = [];
   let pendingStart: number | null = null;
 
-  for (const { segment, index } of segmenter.segment(text)) {
+  segments.forEach(({ segment, index }, position) => {
     const start: number = pendingStart ?? index;
-    const end = index + segment.length;
-    if (ABBREVIATION.test(segment.trimEnd())) {
+    if (joinsNext(segment, segments[position + 1]?.segment)) {
       pendingStart = start;
-      continue;
+      return;
     }
     pendingStart = null;
-    ranges.push({ start, end });
-  }
+    ranges.push({ start, end: index + segment.length });
+  });
   if (pendingStart !== null) ranges.push({ start: pendingStart, end: text.length });
   return ranges;
 }
@@ -194,4 +226,56 @@ export function offsetsToRange(entries: readonly PhraseEntry[], start: number, e
   range.setStart(...locate(first, start));
   range.setEnd(...locate(last, end));
   return range;
+}
+
+/** Blocks whose end reads as a space in a quote that crosses them. */
+const QUOTE_BLOCKS = "p, li, h1, h2, h3, h4, h5, h6, td, th, pre, dt, dd";
+
+/** The response text a range covers, as one line, without the notes and the code blocks it crosses. */
+export function quoteOfRange(range: Range): string {
+  const common = range.commonAncestorContainer;
+  const within = common.nodeType === Node.ELEMENT_NODE ? (common as Element) : common.parentElement;
+  if (within?.closest(".note, .code-block")) return "";
+  const fragment = range.cloneContents();
+  for (const skipped of fragment.querySelectorAll(".note-slot, .note, .code-block")) skipped.remove();
+  for (const block of fragment.querySelectorAll(QUOTE_BLOCKS)) block.append(" ");
+  return normalizeSpaces(fragment.textContent ?? "");
+}
+
+/**
+ * Finds a quote in the response text, whatever its spaces and line breaks: the positions of the
+ * occurrence nearest to `near`, or null. Used when a saved note no longer matches its position.
+ */
+export function locateQuote(entries: readonly PhraseEntry[], quote: string, near = 0): TextRange | null {
+  const target = normalizeSpaces(quote);
+  if (!target) return null;
+  // The response text with every run of spaces as one space, and where each character comes from.
+  let text = "";
+  const origins: number[] = [];
+  const space = (origin: number) => {
+    if (text === "" || text.endsWith(" ")) return;
+    text += " ";
+    origins.push(origin);
+  };
+  let block: Element | null = null;
+  for (const entry of entries) {
+    const own = entry.el.closest(TEXT_BLOCKS);
+    if (own !== block) space(entry.start);
+    block = own;
+    const raw = entry.el.textContent ?? "";
+    for (let i = 0; i < raw.length; i++) {
+      if (/\s/.test(raw[i]!)) space(entry.start + i);
+      else {
+        text += raw[i];
+        origins.push(entry.start + i);
+      }
+    }
+  }
+
+  let best: TextRange | null = null;
+  for (let at = text.indexOf(target); at >= 0; at = text.indexOf(target, at + 1)) {
+    const found = { start: origins[at]!, end: origins[at + target.length - 1]! + 1 };
+    if (!best || Math.abs(found.start - near) < Math.abs(best.start - near)) best = found;
+  }
+  return best;
 }

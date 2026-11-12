@@ -670,6 +670,16 @@ button.note-newchat:hover {
   padding-top: 14px;
   border-top: 0.5px solid var(--pbp-line-strong);
   font-size: 14px;
+  /* A drag that runs past the end of the response stops there: the bar's labels are not part of
+     the passage. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Safari passes the rule on to fields, where it would block typing and copying by hand. */
+.composer textarea {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* One line under the response: how to annotate on the left, the counter and Send on the right. */

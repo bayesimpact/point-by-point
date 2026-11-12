@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { renderMarkdown } from "../src/render";
-import { indexPhrases, offsetsToRange, pointToOffset, segmentContainer, splitSentences } from "../src/segment";
+import {
+  indexPhrases,
+  locateQuote,
+  offsetsToRange,
+  pointToOffset,
+  quoteOfRange,
+  segmentContainer,
+  splitSentences,
+} from "../src/segment";
 
 function sentencesOf(text: string, locale = "fr") {
   return splitSentences(text, locale).map(({ start, end }) => text.slice(start, end).trim());
@@ -34,6 +42,27 @@ describe("splitSentences", () => {
       "A classic.",
     ]);
     expect(sentencesOf("Ask Dr. Smith. Then rest.", "en")).toEqual(["Ask Dr. Smith.", "Then rest."]);
+  });
+
+  it("ends a sentence on an everyday word that is also an abbreviation", () => {
+    expect(sentencesOf("The answer is no. But we can try.", "en")).toEqual(["The answer is no.", "But we can try."]);
+    expect(sentencesOf("C'est de l'art. Mais pas seulement.")).toEqual(["C'est de l'art.", "Mais pas seulement."]);
+    expect(sentencesOf("Il a commis un vol. La police arrive.")).toEqual(["Il a commis un vol.", "La police arrive."]);
+  });
+
+  it("keeps those abbreviations with the number they introduce", () => {
+    expect(sentencesOf("See No. 5 Is the best. Then stop.", "en")).toEqual(["See No. 5 Is the best.", "Then stop."]);
+    expect(sentencesOf("Voir art. 12 Du code. Fin.")).toEqual(["Voir art. 12 Du code.", "Fin."]);
+    expect(sentencesOf("Read vol. II Of the series. Done.", "en")).toEqual(["Read vol. II Of the series.", "Done."]);
+  });
+
+  it("ends a sentence on a capital letter followed by an ordinary sentence", () => {
+    expect(sentencesOf("Choose option A. Then continue.", "en")).toEqual(["Choose option A.", "Then continue."]);
+    expect(sentencesOf("Prends la vitamine C. Elle aide.")).toEqual(["Prends la vitamine C.", "Elle aide."]);
+    expect(sentencesOf("On garde le plan B. L'autre est trop cher.")).toEqual(["On garde le plan B.", "L'autre est trop cher."]);
+    // An initial before a name stays with it.
+    expect(sentencesOf("Ask J. Smith about it. Then rest.", "en")).toEqual(["Ask J. Smith about it.", "Then rest."]);
+    expect(sentencesOf("Selon M. Le Pen, non. Fin.")).toEqual(["Selon M. Le Pen, non.", "Fin."]);
   });
 
   it("does not split decimal numbers", () => {
@@ -103,5 +132,41 @@ describe("segmentContainer", () => {
     const { root } = render('Texte ![logo](https://example.com/x.png) <script>alert(1)</script><img src=x onerror=alert(1)>');
     expect(root.querySelector("img, script")).toBeNull();
     expect(root.querySelector("a")?.textContent).toBe("logo");
+  });
+
+  it("quotes a range as one line, without the notes and the code it crosses", () => {
+    const { root } = render("Une phrase.\n\n```\ncode\n```\n\nSecond paragraphe.");
+    const note = document.createElement("div");
+    note.className = "note";
+    note.textContent = "note text";
+    root.querySelector("p")!.after(note);
+    const range = document.createRange();
+    range.selectNodeContents(root);
+    expect(quoteOfRange(range)).toBe("Une phrase. Second paragraphe.");
+    range.selectNodeContents(root.querySelector("pre")!);
+    expect(quoteOfRange(range)).toBe("");
+  });
+
+  it("finds a quote again from its text, nearest to where it was", () => {
+    const { phrases } = render("On verra. Une phrase   avec\ndes espaces.\n\nOn verra. Fin de la réponse.");
+    const text = phrases.map((entry) => entry.el.textContent).join("");
+    const found = locateQuote(phrases, "phrase avec des espaces", 0)!;
+    expect(text.slice(found.start, found.end).replace(/\s+/g, " ")).toBe("phrase avec des espaces");
+    const first = locateQuote(phrases, "On verra.", 0)!;
+    const second = locateQuote(phrases, "On verra.", text.length)!;
+    expect(first.start).toBe(0);
+    expect(second.start).toBe(text.lastIndexOf("On verra."));
+    // Across two blocks, the quote has a space where the text has none.
+    const across = locateQuote(phrases, "des espaces. On verra.", 0)!;
+    expect(offsetsToRange(phrases, across.start, across.end)!.toString().replace(/\s+/g, " ")).toContain("des espaces.");
+    expect(across.end).toBe(second.start + "On verra.".length);
+    expect(locateQuote(phrases, "absent", 0)).toBeNull();
+  });
+
+  it("drops the attributes the interface keeps its own state in", () => {
+    const { root } = render('<span data-s="0" data-id="1" aria-label="x" class="phrase" id="send" style="color:red">Texte.</span>');
+    const span = root.querySelector("p > span")!;
+    expect(span.getAttributeNames().filter((name) => name !== "class" || span.className !== "phrase")).toEqual([]);
+    expect(root.querySelector("[data-id], [aria-label], [id], [style]")).toBeNull();
   });
 });

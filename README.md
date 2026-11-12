@@ -221,6 +221,17 @@ programs with your terminal's `PATH`.
   }
   ```
 
+To check the file before running it: each release publishes its SHA-256, and an attestation that
+the release workflow built it from this repository
+([GitHub CLI](https://cli.github.com) for the second):
+
+```sh
+cd ~/.point-by-point
+curl -fsSLO https://github.com/alexisjamet/point-by-point/releases/latest/download/point-by-point-server.mjs.sha256
+shasum -a 256 -c point-by-point-server.mjs.sha256
+gh attestation verify point-by-point-server.mjs --repo alexisjamet/point-by-point
+```
+
 Remove the hosted connector (or turn it off) where you use the local one, so Claude does not see
 the tool twice. claude.ai in a browser and the mobile apps cannot reach a server on your computer:
 they need the hosted server or your own copy. To update, download the file again.
@@ -257,8 +268,10 @@ in the chat, so you never end up with an invisible response.
   passage on the clipboard, line breaks included; **Annotate** opens a note under its paragraph, or
   returns to the passage's note if it has one. The menu sits above the selection with a mouse and
   below it on a touch screen, clear of the system's own menu; it leaves with the selection or with
-  Escape. Pointing at or clicking the text proposes nothing. On a touch screen, a tap annotates its
-  whole sentence; with the keyboard, Tab moves from sentence to sentence and Enter annotates one.
+  Escape. A drag may end past the response, below it or outside the frame: the passage is the part
+  inside the response. A selection of code alone only offers **Copy**. Pointing at or clicking the
+  text proposes nothing. On a touch screen, a tap annotates its whole sentence; with the keyboard,
+  the arrow keys move from sentence to sentence and Enter annotates one.
 - Annotated passages take a flat yellow highlight.
 - Every note hangs on a sentence or a passage; empty notes are ignored. The button only shows once a
   note has text, and then the hint goes away. In ChatGPT, from two notes on, it says how many it
@@ -278,17 +291,22 @@ in the chat, so you never end up with an invisible response.
 - The notes stay in place after a send, and are kept with the response's draft: the response keeps
   them as a record, and if you discard the message, the button hands it over again. A mark says
   where the message went, until you change a note. A widget from an earlier
-  response can still send: its message starts with "(About an earlier response)".
-- Every keystroke is saved as a draft and restored if the page reloads.
-- Keyboard: Tab / Shift+Tab move between sentences, Enter opens a note, Escape leaves a note,
-  Cmd/Ctrl+Enter sends.
+  response can still send: its message starts with "(About an earlier response)". Another
+  conversation open in another tab does not count as a later response.
+- Every keystroke is saved as a draft and restored if the page reloads. Each response keeps its own
+  notes, even when two responses have the same text. A note always comes back on the text it
+  quotes; if a later release splits the response differently, it follows its quote.
+- Keyboard: Tab reaches the response, where one sentence at a time is a tab stop; the arrow keys
+  (and Home / End) move between sentences, Enter opens a note, Escape leaves a note, Cmd/Ctrl+Enter
+  sends. A screen reader reads the response as text, not as a list of buttons.
 - Mobile: creating a note does not open the keyboard; fields are 16 px (no iOS zoom). Opening a
   note asks the host for fullscreen; if the host refuses, a focus mode keeps only the quote, the
   field and a **Done** button above the keyboard. In fullscreen, **Done** shows the whole response
   at the note, still fullscreen, so you can go on to the next point; the send button or **Back to the
   conversation** returns inline.
 - English and French, following the host's locale. Light and dark, following the host's theme.
-- Links open through the host. Images are shown as links (the interface loads nothing remote).
+- Links open through the host, when they are full `http(s)` or `mailto` addresses; a relative link
+  or an anchor opens nothing. Images are shown as links (the interface loads nothing remote).
 
 ## Privacy and security
 
@@ -314,15 +332,20 @@ What the code guarantees:
   no CDN script, font or image. The new conversation button only asks the host to open a link to
   claude.ai or chatgpt.com: the passage and the note in that link go to the app you are using,
   never to this server.
-- **Sanitised rendering.** Markdown goes through `marked` then DOMPurify with a strict allow-list;
+- **Sanitised rendering.** Markdown goes through `marked` then DOMPurify with a strict allow-list
+  of tags and attributes (no `class`, `id`, `style`, `data-*` or `aria-*` from the response);
   if DOMPurify cannot run, the text is shown as plain text, never as raw HTML.
 - **No authentication and no personal data.** A Cloudflare rate limit (1000 requests per minute per
   IP — generous, because claude.ai users share a few Anthropic egress IPs) caps abusive clients.
-- **Minimal, pinned dependencies** (exact versions, lockfile), reviewed before each update.
+- **Minimal, pinned dependencies** (exact versions, lockfile), reviewed before each update. The
+  GitHub Actions of the build are pinned to commits.
 - **MIT licence**, reproducible build from this repository.
 
-Drafts are kept in the interface's own `localStorage` (inside the host's sandbox, on your device)
-and deleted after a successful send.
+Your notes are kept in the interface's own `localStorage` (inside the host's sandbox, on your
+device, in that browser or app only), and they stay there after a send: that is how a response
+still shows them when you come back to it. They are deleted when you remove them, 90 days after
+their last change, or beyond the 200 most recent responses with notes. To delete them all at once,
+clear the site data of the app you use Claude or ChatGPT in.
 
 ## Development
 
@@ -337,13 +360,15 @@ plugin/     the plugin: skills/point-by-point, plus two manifests for the same p
             .claude-plugin/plugin.json + .mcp.json (Claude),
             plugin.json + mcp.json (portable Agent Plugins format: ChatGPT, Codex)
 .claude-plugin/marketplace.json   this repository as a plugin marketplace
+scripts/version.mjs               checks or sets the release version in the four files that carry it
 ```
 
 ```sh
 pnpm install
 pnpm build        # interface → packages/ui/dist/index.html, embedded into the Worker and into
                   # the local server, packages/server/dist/point-by-point-server.mjs
-pnpm test         # unit tests (segmentation, message format, drafts, server guards)
+pnpm test         # unit tests (segmentation, message format, drafts, clipboard, server guards,
+                  # and that the tool description, the server instructions and the skill agree)
 pnpm e2e          # Playwright: the built interface in a test host (desktop and mobile)
 pnpm dev          # wrangler dev on http://localhost:8787/mcp
 pnpm --filter @point-by-point/ui shots   # after a build: the README screenshots, light and dark
@@ -381,10 +406,12 @@ A fork deployed to another Cloudflare account gets its own URL: put it (with `/m
 
 ### Release
 
-Bump `version` in `package.json`, `plugin/.claude-plugin/plugin.json`, `plugin/plugin.json` and
-`.claude-plugin/marketplace.json`, then push a `v<version>` tag. The release workflow runs every
+Run `pnpm set-version <version>`: it writes the version in `package.json`,
+`plugin/.claude-plugin/plugin.json`, `plugin/plugin.json` and `.claude-plugin/marketplace.json`
+(CI fails when the four disagree). Then push a `v<version>` tag. The release workflow runs every
 check, builds the interface under its versioned URI (a new URI per release, so no host serves a
-stale cached interface), deploys the Worker and attaches the skill archive and the local server to the GitHub release.
+stale cached interface), deploys the Worker and attaches the skill archive and the local server,
+with its SHA-256 and a build provenance attestation, to the GitHub release.
 The URIs of earlier releases keep being served, with the current interface, so widgets already in
 conversations keep loading.
 Deploying needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repository secrets;

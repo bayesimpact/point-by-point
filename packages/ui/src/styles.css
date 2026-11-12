@@ -979,3 +979,56 @@ button:active:not(:disabled) {
     transition-duration: 1ms !important;
   }
 }
+
+/* ---------- Selection menu ---------- */
+
+/* Next to a selection: Copy, and Annotate in the yellow of the notes. */
+.selection-menu {
+  position: absolute;
+  z-index: 20;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--pbp-field);
+  border: 0.5px solid var(--pbp-line-strong);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.selection-menu button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: none;
+  white-space: nowrap;
+}
+
+.selection-menu .selection-annotate {
+  background: var(--pbp-send);
+  color: var(--pbp-send-ink);
+}
+
+.selection-menu .selection-annotate:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--pbp-send) 85%, #c98a00);
+}
+
+.selection-menu .selection-copy[data-state="failed"] {
+  color: var(--pbp-danger);
+}
+
+@media (pointer: coarse) {
+  .selection-menu button {
+    min-height: 38px;
+    padding: 0 16px;
+  }
+}
+
+/* Off screen, where a copied passage is laid out to read its line breaks. */
+.copy-holder {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  width: 600px;
+  pointer-events: none;
+}

@@ -26,8 +26,8 @@ and send everything back in a single message.
   - [Release](#release)
 - [License](#license)
 
-**1. Select a passage, and write under it.** Drag over exactly the words you want to annotate:
-they stay highlighted in yellow.
+**1. Select a passage, and write under it.** Drag over exactly the words you want, then choose
+**Annotate** in the menu next to them (or **Copy** to copy them): they stay highlighted in yellow.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/annotate-dark.png">
@@ -145,7 +145,7 @@ install **point-by-point** from the Plugins Directory, under that marketplace.
 Start a **new conversation** and ask anything. Instead of plain text, the answer appears in an
 interface:
 
-1. Select a passage (on a phone, tap a sentence) and type your reply under it. Repeat for as many
+1. Select a passage and choose **Annotate** (on a phone, tap a sentence), then type your reply under it. Repeat for as many
    passages as you like.
 2. Press **Draft my reply** (in ChatGPT, **Send**). In Claude the message lands in your
    message box: press Enter to send it.
@@ -253,10 +253,12 @@ in the chat, so you never end up with an invisible response.
 
 ### What the interface does
 
-- Select a passage of more than two characters with the mouse to open a note under its paragraph;
-  select the same passage again to return to its note. Pointing at or clicking the text proposes
-  nothing. On a touch screen, a tap annotates its whole sentence; with the keyboard, Tab moves from
-  sentence to sentence and Enter annotates one.
+- Selecting a passage of more than two characters shows a menu next to it: **Copy** puts the
+  passage on the clipboard, line breaks included; **Annotate** opens a note under its paragraph, or
+  returns to the passage's note if it has one. The menu sits above the selection with a mouse and
+  below it on a touch screen, clear of the system's own menu; it leaves with the selection or with
+  Escape. Pointing at or clicking the text proposes nothing. On a touch screen, a tap annotates its
+  whole sentence; with the keyboard, Tab moves from sentence to sentence and Enter annotates one.
 - Annotated passages take a flat yellow highlight.
 - Every note hangs on a sentence or a passage; empty notes are ignored. The button only shows once a
   note has text, and then the hint goes away. In ChatGPT, from two notes on, it says how many it

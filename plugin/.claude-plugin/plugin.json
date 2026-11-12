@@ -1,6 +1,6 @@
 {
   "name": "point-by-point",
-  "version": "0.33.0",
+  "version": "0.34.0",
   "description": "Annotate any sentence of Claude's responses and reply point by point in a single message.",
   "author": {
     "name": "Alexis Jamet"

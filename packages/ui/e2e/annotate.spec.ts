@@ -26,7 +26,7 @@ async function mount(page: Page, options: Partial<MountOptions> = {}) {
 const recorded = (page: Page) => page.evaluate(() => window.recorded);
 
 /** Selects a passage and releases the mouse, as a drag over it does (the press leaves any note). */
-async function annotate(frame: FrameLocator, passage: string) {
+async function select(frame: FrameLocator, passage: string) {
   await frame.locator("#content").evaluate((content, text) => {
     (document.activeElement as HTMLElement | null)?.blur();
     const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
@@ -43,7 +43,14 @@ async function annotate(frame: FrameLocator, passage: string) {
     }
     throw new Error(`passage not found: ${text}`);
   }, passage);
-  // The note opens just after the release, focused.
+  await expect(frame.locator(".selection-menu")).toBeVisible();
+}
+
+/** Selects a passage and chooses Annotate in the menu next to it. */
+async function annotate(frame: FrameLocator, passage: string) {
+  await select(frame, passage);
+  await frame.locator(".selection-annotate").click();
+  // The note opens, focused.
   await expect(frame.locator(".note textarea:focus")).toHaveCount(1);
 }
 
@@ -119,9 +126,65 @@ test("a drag with the mouse annotates exactly the passage it covers", async ({ p
   await page.mouse.down();
   await page.mouse.move(span.x + words.right - 1, span.y + words.middle, { steps: 8 });
   await page.mouse.up();
+  await expect(frame.locator(".selection-menu")).toBeVisible();
+  await expect(frame.locator(".note")).toHaveCount(0);
+  await frame.locator(".selection-annotate").click();
   await expect(frame.locator(".note-quote")).toHaveText("switch traffic");
   await expect(frame.locator(".note textarea")).toBeFocused();
   expect(await highlighted(frame)).toBe(1);
+});
+
+test("a selection offers Copy and Annotate, next to it", async ({ page }) => {
+  const frame = await mount(page);
+  await select(frame, "Watch the error rate.");
+  const menu = frame.locator(".selection-menu");
+  await expect(menu.locator("button")).toHaveText(["Copy", "Annotate"]);
+  await expect(frame.locator(".note")).toHaveCount(0);
+  const box = (await menu.boundingBox())!;
+  const line = (await frame.locator(".phrase", { hasText: "Watch the error rate." }).boundingBox())!;
+  expect(box.y + box.height).toBeLessThanOrEqual(line.y);
+});
+
+test("Copy puts the selected text on the clipboard and keeps the selection", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const frame = await mount(page);
+  await select(frame, "Keep the old cluster for a week.");
+  await frame.locator(".selection-copy").click();
+  await expect(frame.locator(".selection-copy")).toHaveText("Copied");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("Keep the old cluster for a week.");
+  await expect(frame.locator(".note")).toHaveCount(0);
+  expect(await frame.locator("html").evaluate(() => getSelection()!.toString())).toBe("Keep the old cluster for a week.");
+  await expect(frame.locator(".selection-menu")).toBeHidden();
+});
+
+test("Copy keeps the line breaks of a passage across blocks", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const frame = await mount(page);
+  await frame.locator("#content").evaluate((content) => {
+    const items = content.querySelectorAll("li");
+    const range = document.createRange();
+    range.setStart(items[0]!, 0);
+    range.setEnd(items[1]!, items[1]!.childNodes.length);
+    getSelection()!.removeAllRanges();
+    getSelection()!.addRange(range);
+    content.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await frame.locator(".selection-copy").click();
+  await expect(frame.locator(".selection-copy")).toHaveText("Copied");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    "Keep the old cluster for a week.\nWatch the error rate.",
+  );
+});
+
+test("the menu leaves with the selection, and with Escape", async ({ page }) => {
+  const frame = await mount(page);
+  await select(frame, "Watch the error rate.");
+  await frame.locator("html").evaluate(() => getSelection()!.removeAllRanges());
+  await expect(frame.locator(".selection-menu")).toBeHidden();
+  await select(frame, "Watch the error rate.");
+  await frame.locator(".selection-annotate").press("Escape");
+  await expect(frame.locator(".selection-menu")).toBeHidden();
+  await expect(frame.locator(".note")).toHaveCount(0);
 });
 
 test("selecting an annotated passage again returns to its note without a duplicate", async ({ page }) => {
@@ -148,6 +211,7 @@ test("annotates a free selection with its exact text", async ({ page }) => {
     selection.addRange(range);
     content.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
   });
+  await frame.locator(".selection-annotate").click();
   await expect(frame.locator(".note-quote")).toHaveText("switch traffic");
   await page.keyboard.type("When?");
   await page.keyboard.press("ControlOrMeta+Enter");
@@ -328,7 +392,9 @@ test("offers a copy fallback when sending fails", async ({ page }) => {
 
 test("speaks French when the host does", async ({ page }) => {
   const frame = await mount(page, { context: { locale: "fr-FR" } });
-  await annotate(frame, "Watch the error rate.");
+  await select(frame, "Watch the error rate.");
+  await expect(frame.locator(".selection-menu button")).toHaveText(["Copier", "Annoter"]);
+  await frame.locator(".selection-annotate").click();
   await expect(frame.locator(".note textarea")).toHaveAttribute("placeholder", "Ta réponse ou ta question");
   await expect(frame.locator(".note-remove")).toHaveText("Retirer");
   await expect(frame.locator(".note-remove")).toHaveAttribute("title", "Retirer");

@@ -105,6 +105,7 @@ function applyLabels() {
   nextNoteButton.title = s.nextNote;
   for (const sentence of sentences) labelSentence(sentence);
   for (const annotation of annotations.values()) labelNote(annotation);
+  labelSelectionMenu();
   updateCount();
 }
 
@@ -139,6 +140,7 @@ function renderFinal(text: string, diagnostic = false) {
   if (ready && text === markdown) return;
   markdown = text;
   pendingPartial = null;
+  hideSelectionMenu();
   for (const annotation of annotations.values()) annotation.note.remove();
   annotations.clear();
 
@@ -580,24 +582,147 @@ function selectionInContent(): Range | null {
   return selection.toString().trim().length > 2 ? range : null;
 }
 
+// ---------- Selection menu ----------
+
+// A selection offers two actions next to it: copy the passage, or annotate it.
+const selectionMenu = document.createElement("div");
+selectionMenu.className = "selection-menu";
+selectionMenu.setAttribute("role", "toolbar");
+selectionMenu.hidden = true;
+const menuCopy = document.createElement("button");
+menuCopy.type = "button";
+menuCopy.className = "selection-copy";
+const menuAnnotate = document.createElement("button");
+menuAnnotate.type = "button";
+menuAnnotate.className = "selection-annotate";
+selectionMenu.append(menuCopy, menuAnnotate);
+document.body.append(selectionMenu);
+
+let menuRange: Range | null = null;
+let menuTimer: ReturnType<typeof setTimeout> | undefined;
+
+function labelSelectionMenu() {
+  selectionMenu.setAttribute("aria-label", s.selectionMenu);
+  if (!menuCopy.dataset.state) menuCopy.textContent = s.selectionCopy;
+  menuAnnotate.textContent = s.selectionAnnotate;
+}
+
+function showSelectionMenu(range: Range) {
+  clearTimeout(menuTimer);
+  menuRange = range.cloneRange();
+  delete menuCopy.dataset.state;
+  labelSelectionMenu();
+  selectionMenu.hidden = false;
+  placeSelectionMenu(range);
+}
+
+function hideSelectionMenu() {
+  clearTimeout(menuTimer);
+  selectionMenu.hidden = true;
+  menuRange = null;
+}
+
+/**
+ * Above the start of the selection with a mouse; below its end on touch, where the system's own
+ * selection menu takes the space above.
+ */
+function placeSelectionMenu(range: Range) {
+  const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 || rect.height > 0);
+  const first = rects[0] ?? range.getBoundingClientRect();
+  const last = rects.at(-1) ?? first;
+  const menu = selectionMenu.getBoundingClientRect();
+  const gap = 8;
+  const above = !isTouch() && first.top - menu.height - gap >= 0;
+  const anchor = above ? first : last;
+  const top = above ? first.top - menu.height - gap : last.bottom + gap;
+  const width = document.documentElement.clientWidth;
+  const center = anchor.left + anchor.width / 2;
+  const left = Math.min(Math.max(center - menu.width / 2, gap), Math.max(gap, width - menu.width - gap));
+  selectionMenu.style.top = `${top + window.scrollY}px`;
+  selectionMenu.style.left = `${left + window.scrollX}px`;
+}
+
+function sameRange(a: Range, b: Range): boolean {
+  return a.compareBoundaryPoints(Range.START_TO_START, b) === 0 && a.compareBoundaryPoints(Range.END_TO_END, b) === 0;
+}
+
+/** The selected text as it reads on screen, line breaks included, without the notes it crosses. */
+function plainTextOf(range: Range): string {
+  const holder = document.createElement("div");
+  holder.className = "copy-holder";
+  holder.append(range.cloneContents());
+  for (const skipped of holder.querySelectorAll(".note-slot, .note, button")) skipped.remove();
+  content.append(holder);
+  const text = holder.innerText ?? holder.textContent ?? "";
+  holder.remove();
+  return text.trim();
+}
+
+// The menu keeps the selection: a press on it does not move the focus or the caret. A finger on it
+// can still clear the selection before the tap lands, so the menu stays while it is pressed.
+let pressingMenu = false;
+selectionMenu.addEventListener("mousedown", (event) => event.preventDefault());
+selectionMenu.addEventListener("pointerdown", () => {
+  pressingMenu = true;
+});
+for (const type of ["click", "pointercancel"]) {
+  selectionMenu.addEventListener(type, () => setTimeout(() => (pressingMenu = false), 0));
+}
+
+menuCopy.addEventListener("click", async () => {
+  const range = menuRange;
+  if (!range) return;
+  const copied = await copyCode(plainTextOf(range));
+  menuCopy.dataset.state = copied ? "copied" : "failed";
+  menuCopy.textContent = copied ? s.selectionCopied : s.selectionCopyFailed;
+  clearTimeout(menuTimer);
+  menuTimer = setTimeout(hideSelectionMenu, 1200);
+});
+
+menuAnnotate.addEventListener("click", () => {
+  const range = menuRange;
+  hideSelectionMenu();
+  if (range) annotateSelection(range);
+});
+
+selectionMenu.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  event.preventDefault();
+  hideSelectionMenu();
+});
+
 content.addEventListener("mouseup", (event) => {
   if (!ready || isTouch() || (event.target as HTMLElement).closest(".note")) return;
   setTimeout(() => {
     const range = selectionInContent();
-    if (range) annotateSelection(range);
+    if (range) showSelectionMenu(range);
   }, 0);
 });
 
-// On touch, the selection handles keep moving after the finger lifts: wait until it settles.
+// A changed or cleared selection takes the menu away. On touch, the selection handles keep moving
+// after the finger lifts: the menu waits until the selection settles.
 let selectionTimer: ReturnType<typeof setTimeout> | undefined;
 document.addEventListener("selectionchange", () => {
-  if (!ready || !isTouch()) return;
+  if (!ready) return;
+  if (menuRange && !menuCopy.dataset.state && !pressingMenu) {
+    const selection = window.getSelection();
+    const current = selection && selection.rangeCount > 0 && !selection.isCollapsed ? selection.getRangeAt(0) : null;
+    if (!current || !sameRange(current, menuRange)) hideSelectionMenu();
+  }
+  if (!isTouch()) return;
   clearTimeout(selectionTimer);
   if (editingText()) return;
   selectionTimer = setTimeout(() => {
     const range = selectionInContent();
-    if (range) annotateSelection(range);
+    if (range && !(menuRange && sameRange(range, menuRange))) showSelectionMenu(range);
   }, 900);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !selectionMenu.hidden) hideSelectionMenu();
+});
+window.addEventListener("resize", () => {
+  if (menuRange) placeSelectionMenu(menuRange);
 });
 
 // ---------- Counter, drafts ----------
@@ -805,12 +930,17 @@ function labelCodeButtons() {
   for (const button of content.querySelectorAll(".code-copy")) button.setAttribute("aria-label", s.codeCopy);
 }
 
-/** Puts the code of a block on the clipboard without opening the message fallback box. */
+/**
+ * Puts text on the clipboard without opening the message fallback box. Where the clipboard API is
+ * refused (a frame without focus), copies from a hidden field, then gives the selection back.
+ */
 async function copyCode(code: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(code);
     return true;
   } catch {
+    const selection = window.getSelection();
+    const kept = selection && selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null;
     const box = document.createElement("textarea");
     box.value = code;
     box.style.cssText = "position:fixed;opacity:0;top:0;left:0";
@@ -818,6 +948,10 @@ async function copyCode(code: string): Promise<boolean> {
     box.select();
     const copied = document.execCommand?.("copy") ?? false;
     box.remove();
+    if (kept) {
+      selection!.removeAllRanges();
+      selection!.addRange(kept);
+    }
     return copied;
   }
 }

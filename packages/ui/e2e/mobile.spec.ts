@@ -108,6 +108,27 @@ test("sending from the fullscreen sheet returns inline", async ({ page }) => {
   await expect.poll(async () => (await page.evaluate(() => window.recorded)).displayModes).toEqual(["fullscreen", "inline"]);
 });
 
+test("a touch selection offers Copy and Annotate below it, once it settles", async ({ page }) => {
+  const frame = await mount(page);
+  await frame.locator("#content").evaluate((content) => {
+    const text = content.querySelector(".phrase")!.firstChild as Text;
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, "First point".length);
+    getSelection()!.removeAllRanges();
+    getSelection()!.addRange(range);
+  });
+  const menu = frame.locator(".selection-menu");
+  await expect(menu).toBeVisible();
+  await expect(frame.locator(".note")).toHaveCount(0);
+  const box = (await menu.boundingBox())!;
+  const line = (await frame.locator(".phrase").first().boundingBox())!;
+  expect(box.y).toBeGreaterThanOrEqual(line.y + line.height);
+  await frame.locator(".selection-annotate").tap();
+  await expect(frame.locator(".note-quote")).toHaveText("First point");
+  await expect(menu).toBeHidden();
+});
+
 test("typing in a note is not mistaken for a passage selection", async ({ page }) => {
   const frame = await mount(page);
   await frame.locator(".phrase", { hasText: "Second point here." }).tap();

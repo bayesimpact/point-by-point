@@ -199,6 +199,20 @@
   padding: 6px;
 }
 .pbp-count { padding: 0 10px 0 12px; font-weight: 500; opacity: 0.75; white-space: nowrap; }
+/* The e-mail choices, above the toolbar. */
+.pbp-mail {
+  max-width: 340px;
+  padding: 8px;
+  background: var(--pbp-paper);
+  color: var(--pbp-ink);
+  border: 1px solid var(--pbp-line);
+  border-radius: var(--pbp-radius);
+  box-shadow: var(--pbp-shadow);
+}
+.pbp-mail[hidden] { display: none; }
+.pbp-mail-links { display: flex; flex-wrap: wrap; gap: 4px; }
+.pbp-mail-links .pbp-btn { border: 1px solid var(--pbp-line); }
+.pbp-mail-note { margin: 8px 4px 2px; color: var(--pbp-muted); font: 12.5px/1.4 var(--pbp-font); overflow-wrap: anywhere; }
 .pbp-done { opacity: 0.85; }
 
 @media (max-width: 640px) {

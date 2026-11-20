@@ -25,7 +25,8 @@ import { hitPage, loadPage, type Box } from "./pagetext";
  * page.
  *
  * Where the message goes is the site's business: a `send` function (an endpoint of its own), an
- * e-mail (`mailto`), and always a copy to the clipboard.
+ * e-mail (`mailto`: a choice of Gmail, Outlook or the mail app, the text copied as it opens), and
+ * always a copy to the clipboard.
  */
 
 export interface PageImage {
@@ -57,6 +58,12 @@ export interface Words {
   head: (title: string, url: string) => string;
   page: (label: string, page: number, quote?: string) => string;
   tooLong: string;
+  /** The e-mail choices: a webmail opens in a new tab, the mail app through mailto:. */
+  gmail: string;
+  outlook: string;
+  mailApp: string;
+  /** Under the choices: the text is on the clipboard, and where it goes, for a reader with none of them. */
+  mailCopied: (to: string, cc?: string) => string;
 }
 
 export const WORDS: Record<"fr" | "en", Words> = {
@@ -80,6 +87,10 @@ export const WORDS: Record<"fr" | "en", Words> = {
     head: (t, u) => `Retours sur « ${t} » (${u}) :`,
     page: (l, p, q) => `${l}, page ${p}${q ? ` : ${q}` : ""}`,
     tooLong: "Le retour, point par point, est dans votre presse-papier : collez-le ici.",
+    gmail: "Gmail",
+    outlook: "Outlook",
+    mailApp: "Application de messagerie",
+    mailCopied: (to, cc) => `Le texte est aussi copié : collez-le dans un e-mail à ${to}${cc ? `, copie ${cc}` : ""}.`,
   },
   en: {
     open: "Comment",
@@ -101,6 +112,10 @@ export const WORDS: Record<"fr" | "en", Words> = {
     head: (t, u) => `Feedback on "${t}" (${u}):`,
     page: (l, p, q) => `${l}, page ${p}${q ? `: ${q}` : ""}`,
     tooLong: "The feedback, point by point, is on your clipboard: paste it here.",
+    gmail: "Gmail",
+    outlook: "Outlook",
+    mailApp: "Mail app",
+    mailCopied: (to, cc) => `The text is also copied: paste it in an e-mail to ${to}${cc ? `, cc ${cc}` : ""}.`,
   },
 };
 
@@ -163,6 +178,8 @@ const WORD = /[\p{L}\p{N}'’\-]/u;
 const SHORT = 12;
 /** Some mail apps cut a longer link. */
 const MAILTO_MAX = 1800;
+/** Gmail and Outlook on the web take a longer one; past this the body says to paste. */
+const WEBMAIL_MAX = 7000;
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text = ""): HTMLElementTagNameMap[K] => {
   const e = document.createElement(tag);
@@ -271,12 +288,30 @@ export function mountPins(options: PinsOptions = {}): Pins {
   const row = el("div", "pbp-row");
   const count = el("span", "pbp-count");
   const copyBtn = el("button", "pbp-btn");
-  const mailLink = options.mailto ? el("a", "pbp-btn pbp-primary") : null;
+  // A bare mailto: link does nothing for a reader whose mail lives in a browser tab (no mail app
+  // registered), which is most of them: the button opens a choice instead, and copies the text.
+  const mailBtn = options.mailto ? el("button", "pbp-btn pbp-primary") : null;
+  const mailMenu = options.mailto ? el("div", "pbp-mail") : null;
+  const mailLinks = options.mailto
+    ? { gmail: el("a", "pbp-btn"), outlook: el("a", "pbp-btn"), app: el("a", "pbp-btn") }
+    : null;
+  const mailNote = el("p", "pbp-mail-note");
+  if (mailMenu && mailLinks) {
+    mailMenu.hidden = true;
+    mailBtn?.setAttribute("aria-expanded", "false");
+    for (const a of [mailLinks.gmail, mailLinks.outlook]) {
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+    }
+    const links = el("div", "pbp-mail-links");
+    links.append(mailLinks.gmail, mailLinks.outlook, mailLinks.app);
+    mailMenu.append(links, mailNote);
+  }
   const sendBtn = options.send ? el("button", "pbp-btn pbp-primary") : null;
   const doneBtn = el("button", "pbp-btn pbp-done");
-  for (const b of [copyBtn, sendBtn, doneBtn]) b?.setAttribute("type", "button");
-  row.append(count, copyBtn, ...(sendBtn ? [sendBtn] : mailLink ? [mailLink] : []), doneBtn);
-  bar.append(hint, row);
+  for (const b of [copyBtn, sendBtn, mailBtn, doneBtn]) b?.setAttribute("type", "button");
+  row.append(count, copyBtn, ...(sendBtn ? [sendBtn] : mailBtn ? [mailBtn] : []), doneBtn);
+  bar.append(hint, ...(mailMenu ? [mailMenu] : []), row);
   const bubble = options.launcher === "none" ? null : el("button", "pbp-bubble");
   bubble?.setAttribute("type", "button");
   document.body.append(bar, ...(bubble ? [bubble] : []));
@@ -658,14 +693,32 @@ export function mountPins(options: PinsOptions = {}): Pins {
       sendBtn.textContent = words.send;
       sendBtn.disabled = !n;
     }
-    if (mailLink && options.mailto) {
+    if (mailBtn && mailLinks && options.mailto) {
       const { to, cc } = options.mailto;
-      const head = `mailto:${to}?${cc ? `cc=${encodeURIComponent(cc)}&` : ""}subject=${encodeURIComponent(words.subject(title()))}&body=`;
-      const full = head + encodeURIComponent(message());
-      mailLink.dataset.long = full.length > MAILTO_MAX ? "1" : "";
-      mailLink.href = mailLink.dataset.long ? head + encodeURIComponent(words.tooLong) : full;
-      mailLink.textContent = words.mail;
-      mailLink.classList.toggle("is-disabled", !n);
+      const e = encodeURIComponent;
+      const subject = e(words.subject(title()));
+      const body = e(message());
+      const short = e(words.tooLong);
+      const fit = (head: string, max: number) => head + (head.length + body.length > max ? short : body);
+      mailLinks.app.href = fit(`mailto:${to}?${cc ? `cc=${e(cc)}&` : ""}subject=${subject}&body=`, MAILTO_MAX);
+      mailLinks.gmail.href = fit(
+        `https://mail.google.com/mail/?view=cm&fs=1&to=${e(to)}${cc ? `&cc=${e(cc)}` : ""}&su=${subject}&body=`,
+        WEBMAIL_MAX,
+      );
+      mailLinks.outlook.href = fit(
+        `https://outlook.office.com/mail/deeplink/compose?to=${e(to)}${cc ? `&cc=${e(cc)}` : ""}&subject=${subject}&body=`,
+        WEBMAIL_MAX,
+      );
+      mailLinks.gmail.textContent = words.gmail;
+      mailLinks.outlook.textContent = words.outlook;
+      mailLinks.app.textContent = words.mailApp;
+      mailNote.textContent = words.mailCopied(to, cc);
+      mailBtn.textContent = words.mail;
+      mailBtn.disabled = !n;
+      if (!n && mailMenu) {
+        mailMenu.hidden = true;
+        mailBtn.setAttribute("aria-expanded", "false");
+      }
     }
     if (bubble) {
       bubble.hidden = active;
@@ -702,9 +755,13 @@ export function mountPins(options: PinsOptions = {}): Pins {
   copyBtn.addEventListener("click", async () => {
     if (await copy()) flash(copyBtn, w().copied);
   });
-  mailLink?.addEventListener("click", (e) => {
-    if (!message()) return e.preventDefault();
-    if (mailLink.dataset.long) void copy();
+  mailBtn?.addEventListener("click", () => {
+    if (!mailMenu || !message()) return;
+    const open = mailMenu.hidden;
+    mailMenu.hidden = !open;
+    mailBtn.setAttribute("aria-expanded", String(open));
+    // Copied on opening, so the text is there whichever way the reader writes the e-mail.
+    if (open) void copy();
   });
   sendBtn?.addEventListener("click", async () => {
     const text = message();
